@@ -1,11 +1,6 @@
-// The Daily Code — Prisma schema
-// Single-user, local-first MVP. No auth, one row per (date, habit).
-//
-// Profile is intentionally minimal: it exists so views like Memento Mori
-// can be grounded in real personal data (dateOfBirth, assumedLifespanYears).
-// It is shaped like a user row so future auth / multi-user flows can map
-// 1 profile per user without reshaping callers. For now we treat the first
-// Profile row as "the" active profile.
+// Weekly Compass — Prisma schema
+// Single-user weekly review. One row per week (Sunday week start).
+// Nested sections stored as JSON for simplicity.
 
 generator client {
   provider = "prisma-client-js"
@@ -16,53 +11,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Profile {
-  id                   String   @id @default(cuid())
-  name                 String?
-  dateOfBirth          DateTime @db.Date
-  assumedLifespanYears Int      @default(88)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-}
-
-model Habit {
-  id          String   @id @default(cuid())
-  slug        String   @unique
-  name        String
-  description String?
-  isDefault   Boolean  @default(true)
-  isActive    Boolean  @default(true)
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  checks HabitCheck[]
-
-  @@index([isActive, sortOrder])
-}
-
-model DayEntry {
-  id        String   @id @default(cuid())
-  date      DateTime @unique @db.Date
-  journal   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  checks HabitCheck[]
-}
-
-model HabitCheck {
-  id          String    @id @default(cuid())
-  dayEntryId  String
-  habitId     String
-  completed   Boolean   @default(false)
-  completedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  dayEntry DayEntry @relation(fields: [dayEntryId], references: [id], onDelete: Cascade)
-  habit    Habit    @relation(fields: [habitId], references: [id], onDelete: Cascade)
-
-  @@unique([dayEntryId, habitId])
-  @@index([habitId])
+model WeeklyReview {
+  id              String   @id @default(cuid())
+  weekStart       DateTime @unique @db.Date
+  alignmentScore  Int?
+  alignmentReason String?
+  principles      Json     @default("[]")
+  faults          Json     @default("{\"selected\":[],\"whereShowedUp\":\"\"}")
+  provedMeWrong   String?
+  avoiding        String?
+  commitments     Json     @default("[\"\",\"\",\"\"]")
+  nextWeekJose    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }

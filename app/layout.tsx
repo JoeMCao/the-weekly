@@ -4,9 +4,9 @@ import { Header } from "@/components/Header";
 import { TimeZoneSync } from "@/components/TimeZoneSync";
 
 export const metadata: Metadata = {
-  title: "The Daily Code",
+  title: "Weekly Compass",
   description:
-    "A stoic daily tracker for seven practices. No drama. Return to the code.",
+    "A weekly alignment ritual. Am I becoming the person I want to become?",
 };
 
 export const viewport: Viewport = {

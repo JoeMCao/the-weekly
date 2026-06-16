@@ -1,98 +1,97 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/prisma";
-import { ensureDay } from "@/lib/habits";
-import { dateKeyToUtc, isValidDateKey } from "@/lib/date";
+import { isValidDateKey } from "@/lib/date";
+import type { FaultKey, PrincipleKey, PrincipleStatus } from "@/lib/principles";
 import {
-  DEFAULT_ASSUMED_LIFESPAN,
-  parseDateOfBirthInput,
-  saveCurrentProfile,
-} from "@/lib/profile";
+  type SaveReviewInput,
+  saveReview,
+} from "@/lib/reviews";
 
-const MAX_JOURNAL_LENGTH = 4000;
+const MAX_TEXT = 4000;
 
-export async function saveJournal(dateKey: string, text: string) {
-  if (!isValidDateKey(dateKey)) {
-    throw new Error("Invalid date");
-  }
-
-  const normalized = String(text ?? "").slice(0, MAX_JOURNAL_LENGTH);
-
-  await ensureDay(dateKey);
-
-  await prisma.dayEntry.update({
-    where: { date: dateKeyToUtc(dateKey) },
-    data: { journal: normalized.length === 0 ? null : normalized },
-  });
-
-  revalidatePath("/");
-  revalidatePath("/week");
-  revalidatePath("/month");
-  revalidatePath("/year");
-  revalidatePath(`/day/${dateKey}`);
+function clampText(value: string): string {
+  return String(value ?? "").slice(0, MAX_TEXT);
 }
 
-export async function toggleHabit(dateKey: string, habitId: string) {
-  if (!isValidDateKey(dateKey)) {
-    throw new Error("Invalid date");
-  }
-
-  await ensureDay(dateKey);
-
-  const check = await prisma.habitCheck.findFirst({
-    where: {
-      habitId,
-      dayEntry: { date: new Date(`${dateKey}T00:00:00.000Z`) },
-    },
-  });
-
-  if (!check) {
-    throw new Error("Habit check not found");
-  }
-
-  const nextCompleted = !check.completed;
-  await prisma.habitCheck.update({
-    where: { id: check.id },
-    data: {
-      completed: nextCompleted,
-      completedAt: nextCompleted ? new Date() : null,
-    },
-  });
-
-  revalidatePath("/");
-  revalidatePath("/week");
-  revalidatePath("/month");
-  revalidatePath(`/day/${dateKey}`);
-}
-
-export type SaveProfileResult =
+export type SaveReviewResult =
   | { ok: true }
   | { ok: false; error: string };
 
-export async function saveProfile(
-  formData: FormData,
-): Promise<SaveProfileResult> {
-  const rawDob = String(formData.get("dateOfBirth") ?? "").trim();
-  const rawLifespan = String(formData.get("assumedLifespanYears") ?? "").trim();
-  const rawName = formData.get("name");
-
-  const dob = parseDateOfBirthInput(rawDob);
-  if (!dob) {
-    return { ok: false, error: "Please enter a valid date of birth." };
+export async function saveWeeklyReview(
+  weekStart: string,
+  input: {
+    alignmentScore?: number | null;
+    alignmentReason?: string;
+    principles?: Partial<
+      Record<
+        PrincipleKey,
+        { reflection?: string; status?: PrincipleStatus | null }
+      >
+    >;
+    faults?: { selected?: FaultKey[]; whereShowedUp?: string };
+    provedMeWrong?: string;
+    avoiding?: string;
+    commitments?: [string, string, string];
+    nextWeekJose?: string;
+  },
+): Promise<SaveReviewResult> {
+  if (!isValidDateKey(weekStart)) {
+    return { ok: false, error: "Invalid week." };
   }
 
-  const parsedLifespan = rawLifespan === "" ? DEFAULT_ASSUMED_LIFESPAN : Number(rawLifespan);
-  if (!Number.isFinite(parsedLifespan)) {
-    return { ok: false, error: "Please enter a valid assumed lifespan." };
+  const payload: SaveReviewInput = {};
+
+  if (input.alignmentScore !== undefined) {
+    payload.alignmentScore = input.alignmentScore;
+  }
+  if (input.alignmentReason !== undefined) {
+    payload.alignmentReason = clampText(input.alignmentReason);
+  }
+  if (input.principles) {
+    const principles: SaveReviewInput["principles"] = {};
+    for (const [key, value] of Object.entries(input.principles)) {
+      if (!value) continue;
+      principles[key as PrincipleKey] = {
+        reflection:
+          value.reflection !== undefined
+            ? clampText(value.reflection)
+            : undefined,
+        status: value.status,
+      };
+    }
+    payload.principles = principles;
+  }
+  if (input.faults) {
+    payload.faults = {
+      selected: input.faults.selected,
+      whereShowedUp:
+        input.faults.whereShowedUp !== undefined
+          ? clampText(input.faults.whereShowedUp)
+          : undefined,
+    };
+  }
+  if (input.provedMeWrong !== undefined) {
+    payload.provedMeWrong = clampText(input.provedMeWrong);
+  }
+  if (input.avoiding !== undefined) {
+    payload.avoiding = clampText(input.avoiding);
+  }
+  if (input.commitments) {
+    payload.commitments = input.commitments.map(clampText) as [
+      string,
+      string,
+      string,
+    ];
+  }
+  if (input.nextWeekJose !== undefined) {
+    payload.nextWeekJose = clampText(input.nextWeekJose);
   }
 
-  await saveCurrentProfile({
-    name: typeof rawName === "string" ? rawName : null,
-    dateOfBirth: dob,
-    assumedLifespanYears: parsedLifespan,
-  });
+  await saveReview(weekStart, payload);
 
-  revalidatePath("/memento-mori");
+  revalidatePath("/");
+  revalidatePath("/review");
+  revalidatePath("/trajectory");
   return { ok: true };
 }

@@ -4,20 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const VIEWS = [
-  { href: "/", label: "Day" },
-  { href: "/week", label: "Week" },
-  { href: "/month", label: "Month" },
-  { href: "/year", label: "Year" },
-  { href: "/memento-mori", label: "Memento Mori" },
+  { href: "/", label: "Home" },
+  { href: "/review", label: "This Week" },
+  { href: "/trajectory", label: "Trajectory" },
 ] as const;
 
 function segmentActive(pathname: string, href: string): boolean {
-  if (href === "/") {
-    return pathname === "/" || pathname.startsWith("/day");
-  }
-  if (href === "/memento-mori") {
-    return pathname.startsWith("/memento-mori");
-  }
+  if (href === "/") return pathname === "/";
   return pathname.startsWith(href);
 }
 

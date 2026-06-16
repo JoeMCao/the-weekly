@@ -3,7 +3,7 @@
 // midnight Date objects.
 
 export type DateKey = string; // "YYYY-MM-DD"
-export const TIME_ZONE_COOKIE_NAME = "daily_code_time_zone";
+export const TIME_ZONE_COOKIE_NAME = "weekly_compass_time_zone";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 

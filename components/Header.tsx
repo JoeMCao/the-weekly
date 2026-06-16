@@ -9,10 +9,7 @@ export function Header() {
         className="group inline-flex items-baseline gap-2 self-start"
       >
         <span className="font-serif text-2xl tracking-tight text-ink">
-          The Daily Code
-        </span>
-        <span className="text-xs uppercase tracking-[0.2em] text-ink-faint group-hover:text-ink-soft">
-          v1.1
+          Weekly Compass
         </span>
       </Link>
       <ViewToggle />
