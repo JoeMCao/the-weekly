@@ -37,6 +37,24 @@ export function addWeeks(key: DateKey, weeks: number): DateKey {
   return toDateKey(date);
 }
 
+export function formatWeekRangeShort(key: DateKey): string {
+  const [y, m, d] = key.split("-").map(Number);
+  const start = new Date(y, (m ?? 1) - 1, d ?? 1);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const sameMonth = start.getMonth() === end.getMonth();
+  const startPart = start.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  const endPart = end.toLocaleDateString(undefined, {
+    month: sameMonth ? undefined : "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  return `${startPart} – ${endPart}`;
+}
+
 export function formatWeekLabel(key: DateKey): string {
   const [y, m, d] = key.split("-").map(Number);
   const date = new Date(y, (m ?? 1) - 1, d ?? 1);

@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { WeeklyReviewForm } from "@/components/WeeklyReviewForm";
 import { ViewPageHeader } from "@/components/ViewPageHeader";
 import { isValidDateKey } from "@/lib/date";
-import { ensureReview } from "@/lib/reviews";
+import { ensureReview, reviewHasSubstance } from "@/lib/reviews";
 import {
   getRequestTimeZone,
   weekStartKeyForRequest,
@@ -37,15 +37,23 @@ export default async function ReviewPage({
 
   const review = await ensureReview(weekStart);
   const isCurrentWeek = weekStart === currentWeek;
+  const isPastWeek = weekStart < currentWeek;
 
   return (
     <section className="flex flex-col">
       <ViewPageHeader
-        eyebrow={isCurrentWeek ? "This Week" : "Past Week"}
-        title="Weekly Review"
+        eyebrow={
+          isCurrentWeek ? "This Week" : isPastWeek ? "Past Week" : "Week"
+        }
+        title={isPastWeek && !reviewHasSubstance(review) ? "Catch up" : "Weekly Review"}
         dek={
           <p className="not-italic text-sm normal-case tracking-normal text-ink-faint">
             {formatWeekLong(weekStart)}
+            {isPastWeek && !reviewHasSubstance(review) && (
+              <span className="mt-1 block">
+                This week wasn&apos;t reviewed yet. Fill it in now.
+              </span>
+            )}
           </p>
         }
       />

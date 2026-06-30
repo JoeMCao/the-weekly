@@ -102,6 +102,20 @@ function rowToData(row: {
   };
 }
 
+/** True when the user has entered anything meaningful (not just an empty shell). */
+export function reviewHasSubstance(data: WeeklyReviewData): boolean {
+  if (data.alignmentScore !== null) return true;
+  if (data.alignmentReason.trim().length > 0) return true;
+  if (data.principles.some((p) => p.reflection.trim() || p.status)) return true;
+  if (data.faults.selected.length > 0 || data.faults.whereShowedUp.trim()) {
+    return true;
+  }
+  if (data.provedMeWrong.trim() || data.avoiding.trim()) return true;
+  if (data.commitments.some((c) => c.trim().length > 0)) return true;
+  if (data.nextWeekJose.trim().length > 0) return true;
+  return false;
+}
+
 /** A review is complete when the north star and identity statement are answered. */
 export function isReviewComplete(data: WeeklyReviewData): boolean {
   return (
