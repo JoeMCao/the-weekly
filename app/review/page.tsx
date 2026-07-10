@@ -1,6 +1,9 @@
 import { notFound } from "next/navigation";
+import { DailyNotesSection } from "@/components/DailyNotesSection";
+import { SectionHeader } from "@/components/SectionHeader";
+import { WeekWorkspaceHeader } from "@/components/WeekWorkspaceHeader";
 import { WeeklyReviewForm } from "@/components/WeeklyReviewForm";
-import { ViewPageHeader } from "@/components/ViewPageHeader";
+import { getDailyNotesForWeek } from "@/lib/daily-notes";
 import { isValidDateKey, type DateKey } from "@/lib/date";
 import {
   ensureWeekCalendar,
@@ -12,7 +15,7 @@ import {
   todayKeyForRequest,
   weekStartKeyForRequest,
 } from "@/lib/request-time-zone";
-import { formatWeekLong, weekStartKeyFromDateKey } from "@/lib/week";
+import { weekStartKeyFromDateKey } from "@/lib/week";
 
 export const dynamic = "force-dynamic";
 
@@ -24,10 +27,12 @@ export default async function ReviewPage({
   if (!getRequestTimeZone()) {
     return (
       <section className="flex flex-col gap-6">
-        <ViewPageHeader
-          eyebrow="This Week"
-          title="Syncing your local week..."
-        />
+        <p className="text-xs uppercase tracking-[0.2em] text-ink-faint">
+          This Week
+        </p>
+        <h1 className="font-serif text-3xl tracking-tight text-ink">
+          Syncing your local week…
+        </h1>
       </section>
     );
   }
@@ -43,39 +48,50 @@ export default async function ReviewPage({
     weekStart = weekStartKeyFromDateKey(searchParams.week as DateKey);
   }
 
-  const review = await getReviewForWeek(weekStart, today);
+  const [review, dailyNotes] = await Promise.all([
+    getReviewForWeek(weekStart, today),
+    getDailyNotesForWeek(weekStart),
+  ]);
+
   if (!review) notFound();
 
   const isCurrentWeek = weekStart === currentWeek;
   const isPastWeek = weekStart < currentWeek;
 
   return (
-    <section className="flex flex-col">
-      <ViewPageHeader
-        eyebrow={
-          isCurrentWeek ? "This Week" : isPastWeek ? "Past Week" : "Week"
-        }
-        title={isPastWeek && !reviewHasSubstance(review) ? "Catch up" : "Weekly Review"}
-        dek={
-          <p className="not-italic text-sm normal-case tracking-normal text-ink-faint">
-            {formatWeekLong(weekStart)}
-            {isPastWeek && !reviewHasSubstance(review) && (
-              <span className="mt-1 block">
-                This week wasn&apos;t reviewed yet. Fill it in now.
-              </span>
-            )}
-          </p>
-        }
+    <section className="flex flex-col gap-12 sm:gap-14">
+      <WeekWorkspaceHeader
+        review={review}
+        weekStart={weekStart}
+        isCurrentWeek={isCurrentWeek}
       />
 
-      <div className="mt-10 sm:mt-12">
-        <WeeklyReviewForm
-          review={review}
-          defaultReviewDate={today}
-          isComplete={review.isComplete}
-          previousCommitmentsStale={review.previousCommitmentsStale}
-        />
-      </div>
+      {isPastWeek && !reviewHasSubstance(review) && (
+        <p className="-mt-6 text-sm text-ink-faint">
+          This week wasn&apos;t reviewed yet. Fill it in now.
+        </p>
+      )}
+
+      <WeeklyReviewForm
+        review={review}
+        defaultReviewDate={today}
+        isComplete={review.isComplete}
+        previousCommitmentsStale={review.previousCommitmentsStale}
+        dailyNotesSlot={
+          <>
+            <SectionHeader
+              eyebrow="Daily Notes"
+              subtitle="Capture what is happening while it is happening."
+            />
+            <DailyNotesSection
+              weekStart={weekStart}
+              notes={dailyNotes}
+              today={today}
+              isCurrentWeek={isCurrentWeek}
+            />
+          </>
+        }
+      />
     </section>
   );
 }

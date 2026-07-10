@@ -14,8 +14,11 @@ import {
   type SaveReviewInput,
   saveReview,
 } from "@/lib/reviews";
+import { upsertDailyNote } from "@/lib/daily-notes";
+import { isDateInWeek } from "@/lib/week";
 
 const MAX_TEXT = 4000;
+const MAX_DAILY_NOTE = 12000;
 
 function clampText(value: string): string {
   return String(value ?? "").slice(0, MAX_TEXT);
@@ -32,6 +35,10 @@ export type SaveReviewResult =
 
 export type RefreshPreviousCommitmentsResult =
   | { ok: true; previousCommitments: PreviousCommitment[] }
+  | { ok: false; error: string };
+
+export type SaveDailyNoteResult =
+  | { ok: true }
   | { ok: false; error: string };
 
 type ReviewPayload = {
@@ -193,5 +200,30 @@ export async function refreshPreviousCommitmentsFromPriorReview(
     return { ok: true, previousCommitments };
   } catch {
     return { ok: false, error: "Could not refresh previous commitments." };
+  }
+}
+
+export async function saveDailyNote(
+  weekStart: string,
+  noteDate: string,
+  content: string,
+): Promise<SaveDailyNoteResult> {
+  if (!isValidDateKey(weekStart) || !isValidDateKey(noteDate)) {
+    return { ok: false, error: "Invalid date." };
+  }
+  if (!isDateInWeek(noteDate, weekStart)) {
+    return { ok: false, error: "Note date is not in this week." };
+  }
+
+  try {
+    await upsertDailyNote({
+      weekStart,
+      noteDate,
+      content: String(content ?? "").slice(0, MAX_DAILY_NOTE),
+    });
+    revalidatePath("/review");
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not save note." };
   }
 }

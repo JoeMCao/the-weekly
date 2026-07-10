@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   saveWeeklyReview,
   submitWeeklyReview,
@@ -11,9 +11,11 @@ import {
   formatCommitmentScore,
   formatPreviousCommitmentSourceRange,
   previousCommitmentsHaveStatuses,
+  previousCommitmentStatusLabel,
   PREVIOUS_COMMITMENT_STATUSES,
   type PreviousCommitmentStatus,
 } from "@/lib/commitments";
+import { SectionHeader, WorkspaceZone } from "@/components/SectionHeader";
 import {
   PRINCIPLES,
   computeWeeklyScore,
@@ -56,11 +58,13 @@ export function WeeklyReviewForm({
   defaultReviewDate,
   isComplete = false,
   previousCommitmentsStale = false,
+  dailyNotesSlot,
 }: {
   review: WeeklyReviewSummary;
   defaultReviewDate: string;
   isComplete?: boolean;
   previousCommitmentsStale?: boolean;
+  dailyNotesSlot?: ReactNode;
 }) {
   const [state, setState] = useState<FormState>(() => buildState(review));
   const [saveError, setSaveError] = useState(false);
@@ -319,10 +323,93 @@ export function WeeklyReviewForm({
   }, [review.weekStart, persist]);
 
   return (
-    <form
-      className="flex flex-col gap-10 sm:gap-12"
-      onSubmit={(e) => e.preventDefault()}
-    >
+    <div className="flex flex-col gap-16 sm:gap-20">
+      <WorkspaceZone>
+        <SectionHeader
+          eyebrow="This Week's Commitments"
+          subtitle="The commitments you chose during last week's review."
+        />
+        <div className="rounded-xl border border-stone-300/80 bg-white px-5 py-6 shadow-soft sm:px-7 sm:py-7">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            {sourceRange ? (
+              <p className="text-xs text-ink-faint">From {sourceRange}</p>
+            ) : (
+              <p className="text-xs text-ink-faint">
+                No commitments found for this week.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleRefreshPreviousCommitments()}
+              disabled={isRefreshingCommitments || isSaving}
+              className="shrink-0 rounded-lg border border-line-subtle px-3 py-1.5 text-xs uppercase tracking-[0.12em] text-ink-soft transition-colors hover:border-stone-300 hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isRefreshingCommitments
+                ? "Refreshing…"
+                : "Refresh from previous review"}
+            </button>
+          </div>
+
+          {previousCommitmentsStale && (
+            <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+              These commitments are from an older review. Use{" "}
+              <span className="font-medium">Refresh from previous review</span>{" "}
+              to pull from your latest completed week.
+            </p>
+          )}
+
+          {state.previousCommitments.length > 0 ? (
+            <ul className="mt-6 flex flex-col gap-4">
+              {state.previousCommitments.map((item, index) => (
+                <li
+                  key={item.id}
+                  className="flex flex-col gap-2 border-b border-line-subtle/80 pb-4 last:border-b-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6"
+                >
+                  <p className="text-[15px] leading-snug text-ink">
+                    {item.status === "completed" ? "☑" : "☐"}{" "}
+                    <span className="font-serif">{item.text}</span>
+                  </p>
+                  <div className="flex flex-wrap gap-2 sm:shrink-0">
+                    {PREVIOUS_COMMITMENT_STATUSES.map(({ value, label }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          setPreviousCommitmentStatus(index, value);
+                          flushSave();
+                        }}
+                        className={[
+                          "rounded-lg border px-3 py-1.5 text-xs uppercase tracking-[0.12em]",
+                          item.status === value
+                            ? "border-stone-400 bg-stone-100 text-ink"
+                            : "border-line-subtle text-ink-faint hover:border-stone-300",
+                        ].join(" ")}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </WorkspaceZone>
+
+      {dailyNotesSlot ? (
+        <WorkspaceZone>{dailyNotesSlot}</WorkspaceZone>
+      ) : null}
+
+      <WorkspaceZone className="border-t border-line-subtle pt-16 sm:pt-20">
+        <SectionHeader
+          eyebrow="Weekly Review"
+          subtitle="Reflect on the week, identify patterns, and set the next commitments."
+        />
+
+        <form
+          className="mt-8 flex flex-col gap-8 sm:gap-10"
+          onSubmit={(e) => e.preventDefault()}
+        >
       <section className="rounded-xl border border-line-subtle bg-white px-4 py-5 shadow-soft sm:px-6 sm:py-6">
         <p className="text-xs uppercase tracking-[0.2em] text-ink-faint">
           Review Metadata
@@ -353,42 +440,15 @@ export function WeeklyReviewForm({
         </div>
       </section>
 
-      <section className="rounded-xl border border-line-subtle bg-white px-4 py-5 shadow-soft sm:px-6 sm:py-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-ink-faint">
-              Last Week&apos;s Commitments
-            </p>
-            {sourceRange ? (
-              <p className="mt-1 text-xs text-ink-faint">From {sourceRange}</p>
-            ) : (
-              <p className="mt-1 text-xs text-ink-faint">
-                No previous commitments found.
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => void handleRefreshPreviousCommitments()}
-            disabled={isRefreshingCommitments || isSaving}
-            className="shrink-0 rounded-lg border border-line-subtle px-3 py-1.5 text-xs uppercase tracking-[0.12em] text-ink-soft transition-colors hover:border-stone-300 hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isRefreshingCommitments
-              ? "Refreshing…"
-              : "Refresh from previous review"}
-          </button>
-        </div>
-
-        {previousCommitmentsStale && (
-          <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
-            These commitments are from an older review. Use{" "}
-            <span className="font-medium">Refresh from previous review</span>{" "}
-            to pull from your latest completed week.
+      {commitmentScore.total > 0 && (
+        <section className="rounded-xl border border-line-subtle bg-white px-4 py-5 shadow-soft sm:px-6 sm:py-5">
+          <p className="text-xs uppercase tracking-[0.2em] text-ink-faint">
+            Last Week&apos;s Commitments
           </p>
-        )}
-
-        {commitmentScore.total > 0 && (
-          <p className="mt-5 text-sm text-ink-soft">
+          {sourceRange && (
+            <p className="mt-1 text-xs text-ink-faint">From {sourceRange}</p>
+          )}
+          <p className="mt-4 text-sm text-ink-soft">
             Commitment Score:{" "}
             <span className="font-medium text-ink">
               {formatCommitmentScore(
@@ -398,38 +458,23 @@ export function WeeklyReviewForm({
               completed
             </span>
           </p>
-        )}
-
-        {state.previousCommitments.length > 0 ? (
-          <ul className="mt-5 flex flex-col gap-5">
-            {state.previousCommitments.map((item, index) => (
-              <li key={item.id}>
-                <p className="text-sm font-medium text-ink-soft">{item.text}</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {PREVIOUS_COMMITMENT_STATUSES.map(({ value, label }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => {
-                        setPreviousCommitmentStatus(index, value);
-                        flushSave();
-                      }}
-                      className={[
-                        "rounded-lg border px-3 py-1.5 text-xs uppercase tracking-[0.12em]",
-                        item.status === value
-                          ? "border-stone-400 bg-stone-100 text-ink"
-                          : "border-line-subtle text-ink-faint hover:border-stone-300",
-                      ].join(" ")}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </section>
+          {state.previousCommitments.length > 0 && (
+            <ul className="mt-4 flex flex-col gap-2 border-t border-line-subtle pt-4">
+              {state.previousCommitments.map((item) => (
+                <li
+                  key={item.id}
+                  className="flex items-baseline justify-between gap-4 text-sm"
+                >
+                  <span className="font-serif text-ink-soft">{item.text}</span>
+                  <span className="shrink-0 text-xs uppercase tracking-[0.12em] text-ink-faint">
+                    {previousCommitmentStatusLabel(item.status)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       <WeeklyScoreSummary
         weekDate={formatWeekDate(review.weekStart)}
@@ -712,7 +757,9 @@ export function WeeklyReviewForm({
           </p>
         )}
       </div>
-    </form>
+        </form>
+      </WorkspaceZone>
+    </div>
   );
 }
 

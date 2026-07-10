@@ -216,6 +216,16 @@ export function computeCommitmentScore(items: PreviousCommitment[]): {
   return { score, total: items.length };
 }
 
+export function countCompletedCommitments(items: PreviousCommitment[]): {
+  checked: number;
+  total: number;
+} {
+  return {
+    checked: items.filter((item) => item.status === "completed").length,
+    total: items.length,
+  };
+}
+
 export function formatCommitmentScore(score: number, total: number): string {
   if (total === 0) return "0 / 0";
   const scoreLabel = Number.isInteger(score) ? String(score) : score.toFixed(1);
@@ -250,3 +260,12 @@ export const PREVIOUS_COMMITMENT_STATUSES: {
   { value: "partial", label: "Partial" },
   { value: "missed", label: "Missed" },
 ];
+
+export function previousCommitmentStatusLabel(
+  status: PreviousCommitmentStatus | null,
+): string {
+  if (status === "completed") return "Completed";
+  if (status === "partial") return "Partial";
+  if (status === "missed") return "Missed";
+  return "Not rated";
+}

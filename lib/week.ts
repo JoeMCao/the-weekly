@@ -45,6 +45,32 @@ export function weekEndKey(weekStart: DateKey): DateKey {
   return toDateKey(date);
 }
 
+/** Monday through Sunday date keys for a week. */
+export function dayKeysForWeek(weekStart: DateKey): DateKey[] {
+  const [y, m, d] = weekStart.split("-").map(Number);
+  const start = new Date(y, (m ?? 1) - 1, d ?? 1);
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + i);
+    return toDateKey(date);
+  });
+}
+
+export function formatDayNoteLabel(noteDate: DateKey): string {
+  const [y, m, d] = noteDate.split("-").map(Number);
+  const date = new Date(y, (m ?? 1) - 1, d ?? 1);
+  const weekday = date.toLocaleDateString(undefined, { weekday: "short" });
+  const dayPart = date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  return `${weekday}, ${dayPart}`;
+}
+
+export function isDateInWeek(noteDate: DateKey, weekStart: DateKey): boolean {
+  return dayKeysForWeek(weekStart).includes(noteDate);
+}
+
 export function formatWeekRangeShort(key: DateKey): string {
   const [y, m, d] = key.split("-").map(Number);
   const start = new Date(y, (m ?? 1) - 1, d ?? 1);
