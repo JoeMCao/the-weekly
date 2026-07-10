@@ -1,37 +1,49 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
-  emptyCommitments,
-  emptyFaults,
+  buildPreviousCommitmentsSnapshot,
+  commitmentHasText,
+  parseNextWeekCommitments,
+  parsePreviousCommitments,
+  previousCommitmentsHaveStatuses,
+  type NextWeekCommitments,
+  type PreviousCommitment,
+} from "@/lib/commitments";
+import {
   emptyPrinciples,
-  type FaultKey,
-  type FaultsData,
+  emptyReviewMetadata,
+  emptyWeeklyReflection,
   type PrincipleKey,
   type PrincipleReview,
   type PrincipleStatus,
+  type ReviewMetadata,
+  type WeeklyReflection,
 } from "@/lib/principles";
 import type { DateKey } from "@/lib/date";
+import { isValidDateKey } from "@/lib/date";
+import { addWeeks, utcToWeekStart, weekStartToUtc } from "@/lib/week";
 import {
-  addWeeks,
-  utcToWeekStart,
-  weekStartToUtc,
-} from "@/lib/week";
+  FIRST_WEEK_START,
+  weekStartsFromAnchorThrough,
+} from "@/lib/week-calendar";
 
 export type WeeklyReviewData = {
   weekStart: DateKey;
-  alignmentScore: number | null;
-  alignmentReason: string;
   principles: PrincipleReview[];
-  faults: FaultsData;
-  provedMeWrong: string;
-  avoiding: string;
-  commitments: [string, string, string];
-  nextWeekJose: string;
+  weeklyReflection: WeeklyReflection;
+  reviewMetadata: ReviewMetadata;
+  previousCommitments: PreviousCommitment[];
 };
 
 export type WeeklyReviewSummary = WeeklyReviewData & {
   id: string;
   isComplete: boolean;
+  previousCommitmentsStale: boolean;
 };
+
+function isValidStatus(v: unknown): v is PrincipleStatus {
+  return v === "yes" || v === "somewhat" || v === "no";
+}
 
 function parsePrinciples(raw: unknown): PrincipleReview[] {
   const base = emptyPrinciples();
@@ -47,124 +59,337 @@ function parsePrinciples(raw: unknown): PrincipleReview[] {
     return {
       key: p.key,
       reflection: String(found.reflection ?? ""),
+      evidence: String(found.evidence ?? ""),
       status: isValidStatus(found.status) ? found.status : null,
     };
   });
 }
 
-function isValidStatus(v: unknown): v is PrincipleStatus {
-  return v === "yes" || v === "somewhat" || v === "no";
-}
-
-function parseFaults(raw: unknown): FaultsData {
-  const base = emptyFaults();
+function parseWeeklyReflection(raw: unknown): WeeklyReflection {
+  const base = emptyWeeklyReflection();
   if (!raw || typeof raw !== "object") return base;
   const obj = raw as Record<string, unknown>;
-  const selected = Array.isArray(obj.selected)
-    ? obj.selected.filter((k): k is FaultKey => typeof k === "string")
-    : [];
   return {
-    selected,
-    whereShowedUp: String(obj.whereShowedUp ?? ""),
+    weekSummary: String(obj.weekSummary ?? obj.evidenceReview ?? ""),
+    wins: String(obj.wins ?? ""),
+    attentionRequired: String(obj.attentionRequired ?? ""),
+    recurringPattern: String(obj.recurringPattern ?? ""),
+    theme: String(obj.theme ?? ""),
+    nextWeekCommitments: parseNextWeekCommitments(
+      obj.nextWeekCommitments ??
+        (typeof obj.oneCommitment === "string" && obj.oneCommitment
+          ? [obj.oneCommitment]
+          : null) ??
+        (typeof obj.weekWin === "string" && obj.weekWin ? [obj.weekWin] : null),
+    ),
   };
 }
 
-function parseCommitments(raw: unknown): [string, string, string] {
-  if (!Array.isArray(raw)) return emptyCommitments();
-  return [
-    String(raw[0] ?? ""),
-    String(raw[1] ?? ""),
-    String(raw[2] ?? ""),
-  ];
+function parseReviewMetadata(
+  raw: unknown,
+  defaultReviewDate: string,
+): ReviewMetadata {
+  const base = emptyReviewMetadata(defaultReviewDate);
+  if (!raw || typeof raw !== "object") return base;
+  const obj = raw as Record<string, unknown>;
+  const reviewDate =
+    typeof obj.reviewDate === "string" && isValidDateKey(obj.reviewDate)
+      ? obj.reviewDate
+      : defaultReviewDate || base.reviewDate;
+  return {
+    reviewDate,
+    context: String(obj.context ?? ""),
+    savedAt: typeof obj.savedAt === "string" ? obj.savedAt : null,
+  };
 }
 
-function rowToData(row: {
-  weekStart: Date;
-  alignmentScore: number | null;
-  alignmentReason: string | null;
-  principles: unknown;
-  faults: unknown;
-  provedMeWrong: string | null;
-  avoiding: string | null;
-  commitments: unknown;
-  nextWeekJose: string | null;
-}): WeeklyReviewData {
+function rowToData(
+  row: {
+    weekStart: Date;
+    principles: unknown;
+    weeklyReflection: unknown;
+    reviewMetadata: unknown;
+    priorWeekCommitments: unknown;
+  },
+  defaultReviewDate = "",
+): WeeklyReviewData {
   return {
     weekStart: utcToWeekStart(row.weekStart),
-    alignmentScore: row.alignmentScore,
-    alignmentReason: row.alignmentReason ?? "",
     principles: parsePrinciples(row.principles),
-    faults: parseFaults(row.faults),
-    provedMeWrong: row.provedMeWrong ?? "",
-    avoiding: row.avoiding ?? "",
-    commitments: parseCommitments(row.commitments),
-    nextWeekJose: row.nextWeekJose ?? "",
+    weeklyReflection: parseWeeklyReflection(row.weeklyReflection),
+    reviewMetadata: parseReviewMetadata(row.reviewMetadata, defaultReviewDate),
+    previousCommitments: parsePreviousCommitments(row.priorWeekCommitments),
   };
 }
 
-/** True when the user has entered anything meaningful (not just an empty shell). */
-export function reviewHasSubstance(data: WeeklyReviewData): boolean {
-  if (data.alignmentScore !== null) return true;
-  if (data.alignmentReason.trim().length > 0) return true;
-  if (data.principles.some((p) => p.reflection.trim() || p.status)) return true;
-  if (data.faults.selected.length > 0 || data.faults.whereShowedUp.trim()) {
-    return true;
-  }
-  if (data.provedMeWrong.trim() || data.avoiding.trim()) return true;
-  if (data.commitments.some((c) => c.trim().length > 0)) return true;
-  if (data.nextWeekJose.trim().length > 0) return true;
-  return false;
+function rowToSummary(
+  row: {
+    id: string;
+    weekStart: Date;
+    principles: unknown;
+    weeklyReflection: unknown;
+    reviewMetadata: unknown;
+    priorWeekCommitments: unknown;
+  },
+  defaultReviewDate = "",
+  previousCommitmentsStale = false,
+): WeeklyReviewSummary {
+  const data = rowToData(row, defaultReviewDate);
+  return {
+    ...data,
+    id: row.id,
+    isComplete: isReviewComplete(data),
+    previousCommitmentsStale,
+  };
 }
 
-/** A review is complete when the north star and identity statement are answered. */
-export function isReviewComplete(data: WeeklyReviewData): boolean {
-  return (
-    data.alignmentScore !== null &&
-    data.alignmentReason.trim().length > 0 &&
-    data.nextWeekJose.trim().length > 0
+async function isPreviousCommitmentsSnapshotStale(
+  data: WeeklyReviewData,
+  defaultReviewDate: string,
+): Promise<boolean> {
+  if (data.previousCommitments.length === 0) return false;
+
+  const latestCompleted = await getLatestCompletedReviewBefore(
+    data.weekStart,
+    defaultReviewDate,
   );
+  if (!latestCompleted) return false;
+
+  const currentSourceId = data.previousCommitments[0]?.sourceReviewId;
+  return Boolean(currentSourceId && currentSourceId !== latestCompleted.id);
+}
+
+function principleHasSubstance(p: PrincipleReview): boolean {
+  return Boolean(p.reflection.trim() || p.evidence.trim() || p.status);
+}
+
+export function reviewHasSubstance(data: WeeklyReviewData): boolean {
+  if (data.principles.some(principleHasSubstance)) return true;
+  if (data.previousCommitments.some((i) => i.status)) return true;
+  const r = data.weeklyReflection;
+  const m = data.reviewMetadata;
+  return Boolean(
+    m.context.trim() ||
+      r.weekSummary.trim() ||
+      r.wins.trim() ||
+      r.attentionRequired.trim() ||
+      r.recurringPattern.trim() ||
+      r.theme.trim() ||
+      r.nextWeekCommitments.some(commitmentHasText),
+  );
+}
+
+export function isReviewComplete(data: WeeklyReviewData): boolean {
+  const { weekSummary, theme, nextWeekCommitments } = data.weeklyReflection;
+  if (!weekSummary.trim() || !theme.trim()) return false;
+  if (!nextWeekCommitments.some(commitmentHasText)) return false;
+
+  const rated = data.principles.filter((p) => p.status !== null);
+  if (rated.length === 0) return false;
+  if (!rated.every((p) => p.reflection.trim().length > 0)) return false;
+
+  if (data.previousCommitments.length > 0) {
+    return data.previousCommitments.every((item) => item.status !== null);
+  }
+
+  return true;
+}
+
+async function loadReviewRow(weekStart: DateKey) {
+  return prisma.weeklyReview.findUnique({
+    where: { weekStart: weekStartToUtc(weekStart) },
+  });
+}
+
+export async function getLatestCompletedReviewBefore(
+  weekStart: DateKey,
+  defaultReviewDate = "",
+): Promise<WeeklyReviewSummary | null> {
+  const rows = await prisma.weeklyReview.findMany({
+    where: { weekStart: { lt: weekStartToUtc(weekStart) } },
+    orderBy: { weekStart: "desc" },
+  });
+
+  for (const row of rows) {
+    const summary = rowToSummary(row, defaultReviewDate);
+    if (summary.isComplete) return summary;
+  }
+
+  return null;
+}
+
+async function snapshotPreviousCommitmentsForNewReview(
+  weekStart: DateKey,
+  defaultReviewDate = "",
+): Promise<PreviousCommitment[] | null> {
+  const previousReview = await getLatestCompletedReviewBefore(
+    weekStart,
+    defaultReviewDate,
+  );
+  if (!previousReview) return null;
+
+  const snapshot = buildPreviousCommitmentsSnapshot({
+    id: previousReview.id,
+    weekStart: previousReview.weekStart,
+    nextWeekCommitments: previousReview.weeklyReflection.nextWeekCommitments,
+  });
+
+  return snapshot.length > 0 ? snapshot : null;
 }
 
 export async function getReviewForWeek(
   weekStart: DateKey,
+  defaultReviewDate = "",
 ): Promise<WeeklyReviewSummary | null> {
-  const row = await prisma.weeklyReview.findUnique({
-    where: { weekStart: weekStartToUtc(weekStart) },
-  });
+  const row = await loadReviewRow(weekStart);
   if (!row) return null;
-  const data = rowToData(row);
-  return { ...data, id: row.id, isComplete: isReviewComplete(data) };
+
+  let data = rowToData(row, defaultReviewDate);
+
+  if (!data.reviewMetadata.reviewDate && defaultReviewDate) {
+    data = {
+      ...data,
+      reviewMetadata: {
+        ...data.reviewMetadata,
+        reviewDate: defaultReviewDate,
+      },
+    };
+  }
+
+  data = await maybeRefreshStalePreviousCommitments(data, defaultReviewDate);
+  const previousCommitmentsStale = await isPreviousCommitmentsSnapshotStale(
+    data,
+    defaultReviewDate,
+  );
+
+  return {
+    ...data,
+    id: row.id,
+    isComplete: isReviewComplete(data),
+    previousCommitmentsStale,
+  };
 }
 
-export async function ensureReview(weekStart: DateKey): Promise<WeeklyReviewSummary> {
-  const existing = await getReviewForWeek(weekStart);
+/** When a week was created before the prior review was completed, its snapshot can be stale. */
+async function maybeRefreshStalePreviousCommitments(
+  data: WeeklyReviewData,
+  defaultReviewDate: string,
+): Promise<WeeklyReviewData> {
+  if (data.previousCommitments.length === 0) return data;
+  if (previousCommitmentsHaveStatuses(data.previousCommitments)) return data;
+
+  const latestCompleted = await getLatestCompletedReviewBefore(
+    data.weekStart,
+    defaultReviewDate,
+  );
+  if (!latestCompleted) return data;
+
+  const currentSourceId = data.previousCommitments[0]?.sourceReviewId;
+  if (!currentSourceId || currentSourceId === latestCompleted.id) return data;
+
+  const snapshot = buildPreviousCommitmentsSnapshot({
+    id: latestCompleted.id,
+    weekStart: latestCompleted.weekStart,
+    nextWeekCommitments: latestCompleted.weeklyReflection.nextWeekCommitments,
+  });
+
+  await prisma.weeklyReview.update({
+    where: { weekStart: weekStartToUtc(data.weekStart) },
+    data: {
+      priorWeekCommitments: snapshot.length > 0 ? snapshot : Prisma.DbNull,
+    },
+  });
+
+  return { ...data, previousCommitments: snapshot };
+}
+
+export async function ensureReview(
+  weekStart: DateKey,
+  defaultReviewDate = "",
+): Promise<WeeklyReviewSummary> {
+  const existing = await getReviewForWeek(weekStart, defaultReviewDate);
   if (existing) return existing;
+
+  if (weekStart < FIRST_WEEK_START) {
+    throw new Error(`No review before the first week (${FIRST_WEEK_START}).`);
+  }
+
+  const previousCommitments = await snapshotPreviousCommitmentsForNewReview(
+    weekStart,
+    defaultReviewDate,
+  );
 
   const row = await prisma.weeklyReview.create({
     data: {
       weekStart: weekStartToUtc(weekStart),
       principles: emptyPrinciples(),
-      faults: emptyFaults(),
-      commitments: emptyCommitments(),
+      weeklyReflection: emptyWeeklyReflection(),
+      reviewMetadata: emptyReviewMetadata(defaultReviewDate),
+      priorWeekCommitments:
+        previousCommitments && previousCommitments.length > 0
+          ? previousCommitments
+          : Prisma.DbNull,
     },
   });
-  const data = rowToData(row);
-  return { ...data, id: row.id, isComplete: false };
+
+  const data = rowToData(row, defaultReviewDate);
+  return {
+    ...data,
+    id: row.id,
+    isComplete: false,
+    previousCommitmentsStale: false,
+  };
 }
 
-export type SaveReviewInput = Partial<
-  Omit<WeeklyReviewData, "weekStart" | "principles" | "faults" | "commitments">
-> & {
+export async function ensureWeekCalendar(
+  currentWeekStart: DateKey,
+  defaultReviewDate = "",
+): Promise<void> {
+  const keys = weekStartsFromAnchorThrough(currentWeekStart);
+  if (keys.length === 0) return;
+
+  for (const weekStart of keys) {
+    const exists = await loadReviewRow(weekStart);
+    if (exists) continue;
+
+    const previousCommitments = await snapshotPreviousCommitmentsForNewReview(
+      weekStart,
+      defaultReviewDate,
+    );
+
+    await prisma.weeklyReview.create({
+      data: {
+        weekStart: weekStartToUtc(weekStart),
+        principles: emptyPrinciples(),
+        weeklyReflection: emptyWeeklyReflection(),
+        reviewMetadata: emptyReviewMetadata(defaultReviewDate),
+        priorWeekCommitments:
+          previousCommitments && previousCommitments.length > 0
+            ? previousCommitments
+            : Prisma.DbNull,
+      },
+    });
+  }
+}
+
+export type SaveReviewInput = {
   principles?: Partial<Record<PrincipleKey, Partial<PrincipleReview>>>;
-  faults?: Partial<FaultsData>;
-  commitments?: [string, string, string];
+  weeklyReflection?: Partial<WeeklyReflection>;
+  reviewMetadata?: Partial<ReviewMetadata>;
+  previousCommitments?: PreviousCommitment[];
+  markSaved?: boolean;
+};
+
+export type SaveReviewResult = WeeklyReviewSummary & {
+  savedAt: string | null;
 };
 
 export async function saveReview(
   weekStart: DateKey,
   input: SaveReviewInput,
-): Promise<WeeklyReviewSummary> {
-  const current = await ensureReview(weekStart);
+  defaultReviewDate = "",
+): Promise<SaveReviewResult> {
+  const current = await ensureReview(weekStart, defaultReviewDate);
 
   let principles = current.principles;
   if (input.principles) {
@@ -184,64 +409,102 @@ export async function saveReview(
     });
   }
 
-  let faults = current.faults;
-  if (input.faults) {
-    faults = { ...faults, ...input.faults };
+  const weeklyReflection = {
+    ...current.weeklyReflection,
+    ...input.weeklyReflection,
+  };
+
+  if (input.weeklyReflection?.nextWeekCommitments) {
+    weeklyReflection.nextWeekCommitments = parseNextWeekCommitments(
+      input.weeklyReflection.nextWeekCommitments,
+      current.weeklyReflection.nextWeekCommitments,
+    );
   }
 
-  let commitments = current.commitments;
-  if (input.commitments) {
-    commitments = input.commitments;
+  let reviewMetadata: ReviewMetadata = {
+    ...current.reviewMetadata,
+    ...input.reviewMetadata,
+  };
+
+  if (input.markSaved) {
+    reviewMetadata = {
+      ...reviewMetadata,
+      savedAt: new Date().toISOString(),
+    };
   }
 
-  const alignmentScore =
-    input.alignmentScore !== undefined
-      ? input.alignmentScore
-      : current.alignmentScore;
+  const previousCommitments =
+    input.previousCommitments !== undefined
+      ? input.previousCommitments
+      : current.previousCommitments;
 
   const row = await prisma.weeklyReview.update({
     where: { weekStart: weekStartToUtc(weekStart) },
     data: {
-      alignmentScore:
-        alignmentScore !== null
-          ? Math.min(5, Math.max(1, Math.round(alignmentScore)))
-          : null,
-      alignmentReason:
-        input.alignmentReason !== undefined
-          ? input.alignmentReason
-          : current.alignmentReason,
       principles,
-      faults,
-      provedMeWrong:
-        input.provedMeWrong !== undefined
-          ? input.provedMeWrong
-          : current.provedMeWrong,
-      avoiding:
-        input.avoiding !== undefined ? input.avoiding : current.avoiding,
-      commitments,
-      nextWeekJose:
-        input.nextWeekJose !== undefined
-          ? input.nextWeekJose
-          : current.nextWeekJose,
+      weeklyReflection,
+      reviewMetadata,
+      priorWeekCommitments:
+        previousCommitments.length > 0 ? previousCommitments : Prisma.DbNull,
     },
   });
 
-  const data = rowToData(row);
-  return { ...data, id: row.id, isComplete: isReviewComplete(data) };
+  const data = rowToData(row, defaultReviewDate);
+  const previousCommitmentsStale = await isPreviousCommitmentsSnapshotStale(
+    data,
+    defaultReviewDate,
+  );
+  const summary: SaveReviewResult = {
+    ...data,
+    id: row.id,
+    isComplete: isReviewComplete(data),
+    previousCommitmentsStale,
+    savedAt: reviewMetadata.savedAt,
+  };
+  return summary;
 }
 
-export async function getCompletedReviews(): Promise<WeeklyReviewSummary[]> {
+export async function refreshPreviousCommitments(
+  weekStart: DateKey,
+  defaultReviewDate = "",
+): Promise<PreviousCommitment[]> {
+  await ensureReview(weekStart, defaultReviewDate);
+
+  const previousReview = await getLatestCompletedReviewBefore(
+    weekStart,
+    defaultReviewDate,
+  );
+
+  const snapshot = previousReview
+    ? buildPreviousCommitmentsSnapshot({
+        id: previousReview.id,
+        weekStart: previousReview.weekStart,
+        nextWeekCommitments: previousReview.weeklyReflection.nextWeekCommitments,
+      })
+    : [];
+
+  await prisma.weeklyReview.update({
+    where: { weekStart: weekStartToUtc(weekStart) },
+    data: {
+      priorWeekCommitments: snapshot.length > 0 ? snapshot : Prisma.DbNull,
+    },
+  });
+
+  return snapshot;
+}
+
+export async function getAllReviews(): Promise<WeeklyReviewSummary[]> {
   const rows = await prisma.weeklyReview.findMany({
     orderBy: { weekStart: "asc" },
   });
-  return rows.map((row) => {
-    const data = rowToData(row);
-    return { ...data, id: row.id, isComplete: isReviewComplete(data) };
-  });
+  return rows.map((row) => rowToSummary(row));
 }
+
+export const getCompletedReviews = getAllReviews;
 
 export async function getPreviousWeekReview(
   currentWeekStart: DateKey,
+  defaultReviewDate = "",
 ): Promise<WeeklyReviewSummary | null> {
-  return getReviewForWeek(addWeeks(currentWeekStart, -1));
+  return getReviewForWeek(addWeeks(currentWeekStart, -1), defaultReviewDate);
 }

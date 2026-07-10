@@ -6,9 +6,7 @@ import {
   reviewHasSubstance,
   type WeeklyReviewSummary,
 } from "@/lib/reviews";
-import { addWeeks, formatWeekRangeShort } from "@/lib/week";
-
-const LOOKBACK_WEEKS = 16;
+import { formatWeekRangeShort } from "@/lib/week";
 
 export function TrajectoryView({
   reviews,
@@ -17,7 +15,9 @@ export function TrajectoryView({
   reviews: WeeklyReviewSummary[];
   currentWeekStart: string;
 }) {
-  const weeks = buildTrajectoryWeeks(reviews, currentWeekStart);
+  const weeks = [...reviews]
+    .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
+    .map((review) => toTrajectoryWeek(review, currentWeekStart));
 
   return (
     <section className="flex flex-col">
@@ -74,6 +74,12 @@ export function TrajectoryView({
           </li>
         ))}
       </ul>
+
+      {weeks.length === 0 && (
+        <p className="mt-12 font-serif text-base italic text-ink-faint">
+          No weeks in the calendar yet.
+        </p>
+      )}
     </section>
   );
 }
@@ -87,77 +93,63 @@ type TrajectoryWeek = {
   principleLines: { key: string; label: string; status: "yes" | "somewhat" | "no" }[];
 };
 
-function buildTrajectoryWeeks(
-  reviews: WeeklyReviewSummary[],
+function toTrajectoryWeek(
+  review: WeeklyReviewSummary,
   currentWeekStart: string,
-): TrajectoryWeek[] {
-  const byWeek = new Map(reviews.map((r) => [r.weekStart, r]));
+): TrajectoryWeek {
+  const hasSubstance = reviewHasSubstance(review);
+  const complete = isReviewComplete(review);
 
-  let earliest = addWeeks(currentWeekStart, -(LOOKBACK_WEEKS - 1));
-  if (reviews.length > 0 && reviews[0]!.weekStart < earliest) {
-    earliest = reviews[0]!.weekStart;
+  let statusLabel: string;
+  let actionLabel: string;
+  if (!hasSubstance) {
+    statusLabel = "⬜ Not started";
+    actionLabel = "Start review";
+  } else if (complete) {
+    statusLabel = "✅ Complete";
+    actionLabel = "Review";
+  } else {
+    statusLabel = "◐ In progress";
+    actionLabel = "Continue review";
   }
 
-  const result: TrajectoryWeek[] = [];
-  let cursor = earliest;
+  const principleLines = PRINCIPLES.flatMap((meta) => {
+    const p = review.principles.find((x) => x.key === meta.key);
+    if (!p?.status) return [];
+    return [
+      {
+        key: meta.key,
+        label: meta.trajectoryLabel,
+        status: p.status,
+      },
+    ];
+  });
 
-  while (cursor <= currentWeekStart) {
-    const review = byWeek.get(cursor);
-    const hasSubstance = review ? reviewHasSubstance(review) : false;
-    const complete = review ? isReviewComplete(review) : false;
-
-    let statusLabel: string;
-    let actionLabel: string;
-    if (!review || !hasSubstance) {
-      statusLabel = "⬜ Not started";
-      actionLabel = "Start review";
-    } else if (complete) {
-      statusLabel = "✅ Complete";
-      actionLabel = "Review";
-    } else {
-      statusLabel = "◐ In progress";
-      actionLabel = "Continue review";
-    }
-
-    const preview = review ? buildPreview(review) : null;
-    const principleLines = review
-      ? PRINCIPLES.flatMap((meta) => {
-          const p = review.principles.find((x) => x.key === meta.key);
-          if (!p?.status) return [];
-          return [
-            {
-              key: meta.key,
-              label: meta.trajectoryLabel,
-              status: p.status,
-            },
-          ];
-        })
-      : [];
-
-    result.push({
-      weekStart: cursor,
-      isCurrent: cursor === currentWeekStart,
-      statusLabel,
-      actionLabel,
-      preview,
-      principleLines,
-    });
-
-    cursor = addWeeks(cursor, 1);
-  }
-
-  return result.reverse();
+  return {
+    weekStart: review.weekStart,
+    isCurrent: review.weekStart === currentWeekStart,
+    statusLabel,
+    actionLabel,
+    preview: buildPreview(review),
+    principleLines,
+  };
 }
 
 function buildPreview(review: WeeklyReviewSummary): string | null {
-  if (review.nextWeekJose.trim()) {
-    return `“${review.nextWeekJose.trim()}”`;
+  const commitments = review.weeklyReflection.nextWeekCommitments
+    .filter((c) => c.text.trim())
+    .map((c) => c.text.trim());
+  if (commitments.length > 0) {
+    return commitments.slice(0, 2).join(" · ");
   }
-  if (review.alignmentReason.trim()) {
-    return review.alignmentReason.trim();
+  if (review.weeklyReflection.theme.trim()) {
+    return review.weeklyReflection.theme.trim();
   }
-  if (review.alignmentScore !== null) {
-    return `Alignment: ${review.alignmentScore}/5`;
+  if (review.weeklyReflection.weekSummary.trim()) {
+    return review.weeklyReflection.weekSummary.trim();
+  }
+  if (review.weeklyReflection.wins.trim()) {
+    return review.weeklyReflection.wins.trim();
   }
   return null;
 }

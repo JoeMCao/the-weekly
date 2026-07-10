@@ -7,16 +7,17 @@ import {
   utcToDateKey,
 } from "@/lib/date";
 
-/** Sunday as the first day of the week. */
-export function startOfWeekSunday(date: Date): Date {
+/** Monday as the first day of the week (matches FIRST_WEEK_START anchor). */
+export function startOfWeekMonday(date: Date): Date {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const day = d.getDay();
-  d.setDate(d.getDate() - day);
+  const diff = (day + 6) % 7;
+  d.setDate(d.getDate() - diff);
   return d;
 }
 
 export function weekStartKey(date: Date = new Date()): DateKey {
-  return toDateKey(startOfWeekSunday(date));
+  return toDateKey(startOfWeekMonday(date));
 }
 
 export function weekStartKeyInTimeZone(timeZone: string, now = new Date()): DateKey {
@@ -27,13 +28,20 @@ export function weekStartKeyInTimeZone(timeZone: string, now = new Date()): Date
 export function weekStartKeyFromDateKey(key: DateKey): DateKey {
   const [y, m, d] = key.split("-").map(Number);
   const date = new Date(y, (m ?? 1) - 1, d ?? 1);
-  return toDateKey(startOfWeekSunday(date));
+  return toDateKey(startOfWeekMonday(date));
 }
 
 export function addWeeks(key: DateKey, weeks: number): DateKey {
   const [y, m, d] = key.split("-").map(Number);
   const date = new Date(y, (m ?? 1) - 1, d ?? 1);
   date.setDate(date.getDate() + weeks * 7);
+  return toDateKey(date);
+}
+
+export function weekEndKey(weekStart: DateKey): DateKey {
+  const [y, m, d] = weekStart.split("-").map(Number);
+  const date = new Date(y, (m ?? 1) - 1, d ?? 1);
+  date.setDate(date.getDate() + 6);
   return toDateKey(date);
 }
 

@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { PreviousWeekSummary } from "@/components/PreviousWeekSummary";
 import { ViewPageHeader } from "@/components/ViewPageHeader";
-import { getPreviousWeekReview, getReviewForWeek } from "@/lib/reviews";
+import { getPreviousWeekReview, getReviewForWeek, ensureWeekCalendar, reviewHasSubstance } from "@/lib/reviews";
 import {
   getRequestTimeZone,
+  todayKeyForRequest,
   weekStartKeyForRequest,
 } from "@/lib/request-time-zone";
 import { formatWeekLong } from "@/lib/week";
@@ -29,9 +30,11 @@ export default async function HomePage() {
   }
 
   const weekStart = weekStartKeyForRequest();
-  const currentReview = await getReviewForWeek(weekStart);
-  const previousReview = await getPreviousWeekReview(weekStart);
-  const hasStarted = Boolean(currentReview);
+  const today = todayKeyForRequest();
+  await ensureWeekCalendar(weekStart, today);
+  const currentReview = await getReviewForWeek(weekStart, today);
+  const previousReview = await getPreviousWeekReview(weekStart, today);
+  const hasStarted = currentReview ? reviewHasSubstance(currentReview) : false;
 
   return (
     <section className="flex flex-col">

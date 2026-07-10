@@ -1,8 +1,9 @@
 import { TrajectoryView } from "@/components/TrajectoryView";
 import { ViewPageHeader } from "@/components/ViewPageHeader";
-import { getCompletedReviews } from "@/lib/reviews";
+import { ensureWeekCalendar, getAllReviews } from "@/lib/reviews";
 import {
   getRequestTimeZone,
+  todayKeyForRequest,
   weekStartKeyForRequest,
 } from "@/lib/request-time-zone";
 
@@ -19,7 +20,8 @@ export default async function TrajectoryPage() {
   }
 
   const weekStart = weekStartKeyForRequest();
-  const reviews = await getCompletedReviews();
+  await ensureWeekCalendar(weekStart, todayKeyForRequest());
+  const reviews = await getAllReviews();
 
   return (
     <TrajectoryView reviews={reviews} currentWeekStart={weekStart} />

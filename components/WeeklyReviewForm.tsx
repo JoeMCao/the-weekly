@@ -1,38 +1,96 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { saveWeeklyReview } from "@/app/actions";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  FAULTS,
+  saveWeeklyReview,
+  submitWeeklyReview,
+  refreshPreviousCommitmentsFromPriorReview,
+} from "@/app/actions";
+import {
+  computeCommitmentScore,
+  formatCommitmentScore,
+  formatPreviousCommitmentSourceRange,
+  previousCommitmentsHaveStatuses,
+  PREVIOUS_COMMITMENT_STATUSES,
+  type PreviousCommitmentStatus,
+} from "@/lib/commitments";
+import {
   PRINCIPLES,
-  type FaultKey,
+  computeWeeklyScore,
+  formatWeeklyScore,
+  statusLabel,
   type PrincipleKey,
   type PrincipleStatus,
 } from "@/lib/principles";
-import type { WeeklyReviewData } from "@/lib/reviews";
+import type { WeeklyReviewSummary } from "@/lib/reviews";
+import { fromDateKey } from "@/lib/date";
 
 const AUTOSAVE_DELAY_MS = 1200;
 
-type FormState = WeeklyReviewData;
+type FormState = WeeklyReviewSummary;
 
-function buildState(review: WeeklyReviewData): FormState {
+function buildState(review: WeeklyReviewSummary): FormState {
   return structuredClone(review);
+}
+
+function formatWeekDate(weekStart: string): string {
+  return fromDateKey(weekStart).toLocaleDateString(undefined, {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatSavedTimestamp(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export function WeeklyReviewForm({
   review,
+  defaultReviewDate,
+  isComplete = false,
+  previousCommitmentsStale = false,
 }: {
-  review: WeeklyReviewData;
+  review: WeeklyReviewSummary;
+  defaultReviewDate: string;
+  isComplete?: boolean;
+  previousCommitmentsStale?: boolean;
 }) {
   const [state, setState] = useState<FormState>(() => buildState(review));
   const [saveError, setSaveError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [, startTransition] = useTransition();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<{
+    message: string;
+    savedAt: string;
+  } | null>(() =>
+    review.reviewMetadata.savedAt
+      ? {
+          message: isComplete
+            ? "Review Completed"
+            : "Weekly Review Saved",
+          savedAt: review.reviewMetadata.savedAt,
+        }
+      : null,
+  );
+  const [isRefreshingCommitments, setIsRefreshingCommitments] = useState(false);
   const stateRef = useRef(state);
   const lastSavedRef = useRef(JSON.stringify(review));
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   stateRef.current = state;
+
+  const { score, max } = computeWeeklyScore(state.principles);
+  const commitmentScore = computeCommitmentScore(state.previousCommitments);
+  const sourceRange = formatPreviousCommitmentSourceRange(
+    state.previousCommitments,
+  );
 
   useEffect(() => {
     const next = buildState(review);
@@ -41,6 +99,16 @@ export function WeeklyReviewForm({
     stateRef.current = next;
     setSaveError(false);
     setIsSaving(false);
+    setSaveNotice(
+      review.reviewMetadata.savedAt
+        ? {
+            message: isComplete
+              ? "Review Completed"
+              : "Weekly Review Saved",
+            savedAt: review.reviewMetadata.savedAt,
+          }
+        : null,
+    );
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -48,29 +116,28 @@ export function WeeklyReviewForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate on week change only
   }, [review.weekStart]);
 
+  const buildPayload = useCallback((next: FormState) => ({
+    principles: Object.fromEntries(
+      next.principles.map((p) => [p.key, p]),
+    ) as Partial<
+      Record<
+        PrincipleKey,
+        {
+          reflection: string;
+          evidence: string;
+          status: PrincipleStatus | null;
+        }
+      >
+    >,
+    weeklyReflection: next.weeklyReflection,
+    reviewMetadata: next.reviewMetadata,
+    previousCommitments: next.previousCommitments,
+  }), []);
+
   const persist = useCallback(
     (next: FormState) => {
       setIsSaving(true);
-      return saveWeeklyReview(next.weekStart, {
-        alignmentScore: next.alignmentScore,
-        alignmentReason: next.alignmentReason,
-        principles: Object.fromEntries(
-          next.principles.map((p) => [
-            p.key,
-            { reflection: p.reflection, status: p.status },
-          ]),
-        ) as Partial<
-          Record<
-            PrincipleKey,
-            { reflection: string; status: PrincipleStatus | null }
-          >
-        >,
-        faults: next.faults,
-        provedMeWrong: next.provedMeWrong,
-        avoiding: next.avoiding,
-        commitments: next.commitments,
-        nextWeekJose: next.nextWeekJose,
-      })
+      return saveWeeklyReview(next.weekStart, buildPayload(next))
         .then((result) => {
           if (!result.ok) throw new Error(result.error);
           lastSavedRef.current = JSON.stringify(next);
@@ -79,7 +146,7 @@ export function WeeklyReviewForm({
         .catch(() => setSaveError(true))
         .finally(() => setIsSaving(false));
     },
-    [],
+    [buildPayload],
   );
 
   const scheduleSave = useCallback(
@@ -93,10 +160,28 @@ export function WeeklyReviewForm({
     [persist],
   );
 
-  const update = useCallback(
-    (patch: Partial<FormState>) => {
+  const updateReflection = useCallback(
+    (patch: Partial<FormState["weeklyReflection"]>) => {
       setState((prev) => {
-        const next = { ...prev, ...patch };
+        const next = {
+          ...prev,
+          weeklyReflection: { ...prev.weeklyReflection, ...patch },
+        };
+        stateRef.current = next;
+        scheduleSave(next);
+        return next;
+      });
+    },
+    [scheduleSave],
+  );
+
+  const updateMetadata = useCallback(
+    (patch: Partial<FormState["reviewMetadata"]>) => {
+      setState((prev) => {
+        const next = {
+          ...prev,
+          reviewMetadata: { ...prev.reviewMetadata, ...patch },
+        };
         stateRef.current = next;
         scheduleSave(next);
         return next;
@@ -106,10 +191,7 @@ export function WeeklyReviewForm({
   );
 
   const updatePrinciple = useCallback(
-    (
-      key: PrincipleKey,
-      patch: { reflection?: string; status?: PrincipleStatus | null },
-    ) => {
+    (key: PrincipleKey, patch: Partial<FormState["principles"][number]>) => {
       setState((prev) => {
         const next = {
           ...prev,
@@ -125,15 +207,14 @@ export function WeeklyReviewForm({
     [scheduleSave],
   );
 
-  const toggleFault = useCallback(
-    (key: FaultKey) => {
+  const setPreviousCommitmentStatus = useCallback(
+    (index: number, status: PreviousCommitmentStatus) => {
       setState((prev) => {
-        const selected = prev.faults.selected.includes(key)
-          ? prev.faults.selected.filter((k) => k !== key)
-          : [...prev.faults.selected, key];
         const next = {
           ...prev,
-          faults: { ...prev.faults, selected },
+          previousCommitments: prev.previousCommitments.map((item, i) =>
+            i === index ? { ...item, status } : item,
+          ),
         };
         stateRef.current = next;
         scheduleSave(next);
@@ -142,6 +223,44 @@ export function WeeklyReviewForm({
     },
     [scheduleSave],
   );
+
+  const handleRefreshPreviousCommitments = useCallback(async () => {
+    const hasStatuses = previousCommitmentsHaveStatuses(
+      stateRef.current.previousCommitments,
+    );
+    if (
+      hasStatuses &&
+      !window.confirm(
+        "Refreshing will replace your current previous commitments and clear any completion statuses. Continue?",
+      )
+    ) {
+      return;
+    }
+
+    setIsRefreshingCommitments(true);
+    setSaveError(false);
+    try {
+      const result = await refreshPreviousCommitmentsFromPriorReview(
+        stateRef.current.weekStart,
+        defaultReviewDate,
+      );
+      if (!result.ok) throw new Error(result.error);
+
+      setState((prev) => {
+        const next = {
+          ...prev,
+          previousCommitments: result.previousCommitments,
+        };
+        stateRef.current = next;
+        lastSavedRef.current = JSON.stringify(next);
+        return next;
+      });
+    } catch {
+      setSaveError(true);
+    } finally {
+      setIsRefreshingCommitments(false);
+    }
+  }, [defaultReviewDate]);
 
   const flushSave = useCallback(() => {
     if (timerRef.current) {
@@ -154,6 +273,41 @@ export function WeeklyReviewForm({
     }
   }, [persist]);
 
+  const handleSubmit = useCallback(async () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsSubmitting(true);
+    setSaveError(false);
+    try {
+      const result = await submitWeeklyReview(
+        stateRef.current.weekStart,
+        buildPayload(stateRef.current),
+        defaultReviewDate,
+      );
+      if (!result.ok) throw new Error(result.error);
+      if (result.savedAt) {
+        setSaveNotice({
+          message: result.message,
+          savedAt: result.savedAt,
+        });
+        setState((prev) => ({
+          ...prev,
+          reviewMetadata: {
+            ...prev.reviewMetadata,
+            savedAt: result.savedAt,
+          },
+        }));
+      }
+      lastSavedRef.current = JSON.stringify(stateRef.current);
+    } catch {
+      setSaveError(true);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [buildPayload, defaultReviewDate]);
+
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
@@ -164,83 +318,158 @@ export function WeeklyReviewForm({
     };
   }, [review.weekStart, persist]);
 
-  const hasFaults = state.faults.selected.length > 0;
-
   return (
     <form
-      className="flex flex-col gap-14 sm:gap-16"
+      className="flex flex-col gap-10 sm:gap-12"
       onSubmit={(e) => e.preventDefault()}
     >
-      {/* Section 1 — North Star */}
-      <section className="flex flex-col gap-5">
-        <SectionLabel>North Star</SectionLabel>
-        <h2 className="font-serif text-xl leading-snug text-ink sm:text-2xl">
-          Am I becoming the person I want to become?
-        </h2>
-        <div className="flex flex-col gap-3">
-          <input
-            type="range"
-            min={1}
-            max={5}
-            step={1}
-            value={state.alignmentScore ?? 3}
-            onChange={(e) =>
-              update({ alignmentScore: Number(e.target.value) })
-            }
-            onPointerUp={flushSave}
-            className="w-full accent-stone-700"
-            aria-label="Alignment score"
-          />
-          <div className="flex justify-between text-xs text-ink-faint">
-            <span>Not at all</span>
-            <span className="font-medium text-ink-soft">
-              {state.alignmentScore ?? "—"}
-            </span>
-            <span>Completely</span>
-          </div>
+      <section className="rounded-xl border border-line-subtle bg-white px-4 py-5 shadow-soft sm:px-6 sm:py-6">
+        <p className="text-xs uppercase tracking-[0.2em] text-ink-faint">
+          Review Metadata
+        </p>
+        <div className="mt-5 flex flex-col gap-5">
+          <Field label="Review Date">
+            <input
+              type="date"
+              value={state.reviewMetadata.reviewDate || defaultReviewDate}
+              onChange={(e) => updateMetadata({ reviewDate: e.target.value })}
+              onBlur={flushSave}
+              className={inputClass}
+            />
+          </Field>
+          <Field
+            label="Context"
+            hint="Anything unusual about this review?"
+          >
+            <textarea
+              value={state.reviewMetadata.context}
+              onChange={(e) => updateMetadata({ context: e.target.value })}
+              onBlur={flushSave}
+              rows={2}
+              placeholder="Completing on Thursday, just returned from a trip…"
+              className={textareaClass}
+            />
+          </Field>
         </div>
-        <Field label="Why?">
-          <textarea
-            value={state.alignmentReason}
-            onChange={(e) => update({ alignmentReason: e.target.value })}
-            onBlur={flushSave}
-            rows={3}
-            placeholder="Be honest."
-            className={textareaClass}
-          />
-        </Field>
       </section>
 
-      {/* Section 2 — Principles */}
-      <section className="flex flex-col gap-5">
-        <SectionLabel>Principles</SectionLabel>
-        <ul className="flex flex-col gap-4">
-          {PRINCIPLES.map((meta) => {
-            const p = state.principles.find((x) => x.key === meta.key)!;
-            return (
-              <li
-                key={meta.key}
-                className="rounded-xl border border-line-subtle bg-white px-4 py-4 shadow-soft sm:px-5 sm:py-5"
-              >
-                <p className="text-xs uppercase tracking-[0.18em] text-ink-faint">
-                  {meta.title}
-                </p>
-                <p className="mt-2 font-serif text-lg text-ink">
-                  {meta.question}
-                </p>
-                <div className="mt-4">
-                  <textarea
-                    value={p.reflection}
-                    onChange={(e) =>
-                      updatePrinciple(meta.key, { reflection: e.target.value })
-                    }
-                    onBlur={flushSave}
-                    rows={2}
-                    placeholder="Reflection"
-                    className={textareaClass}
-                  />
+      <section className="rounded-xl border border-line-subtle bg-white px-4 py-5 shadow-soft sm:px-6 sm:py-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-ink-faint">
+              Last Week&apos;s Commitments
+            </p>
+            {sourceRange ? (
+              <p className="mt-1 text-xs text-ink-faint">From {sourceRange}</p>
+            ) : (
+              <p className="mt-1 text-xs text-ink-faint">
+                No previous commitments found.
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleRefreshPreviousCommitments()}
+            disabled={isRefreshingCommitments || isSaving}
+            className="shrink-0 rounded-lg border border-line-subtle px-3 py-1.5 text-xs uppercase tracking-[0.12em] text-ink-soft transition-colors hover:border-stone-300 hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isRefreshingCommitments
+              ? "Refreshing…"
+              : "Refresh from previous review"}
+          </button>
+        </div>
+
+        {previousCommitmentsStale && (
+          <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+            These commitments are from an older review. Use{" "}
+            <span className="font-medium">Refresh from previous review</span>{" "}
+            to pull from your latest completed week.
+          </p>
+        )}
+
+        {commitmentScore.total > 0 && (
+          <p className="mt-5 text-sm text-ink-soft">
+            Commitment Score:{" "}
+            <span className="font-medium text-ink">
+              {formatCommitmentScore(
+                commitmentScore.score,
+                commitmentScore.total,
+              )}{" "}
+              completed
+            </span>
+          </p>
+        )}
+
+        {state.previousCommitments.length > 0 ? (
+          <ul className="mt-5 flex flex-col gap-5">
+            {state.previousCommitments.map((item, index) => (
+              <li key={item.id}>
+                <p className="text-sm font-medium text-ink-soft">{item.text}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {PREVIOUS_COMMITMENT_STATUSES.map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => {
+                        setPreviousCommitmentStatus(index, value);
+                        flushSave();
+                      }}
+                      className={[
+                        "rounded-lg border px-3 py-1.5 text-xs uppercase tracking-[0.12em]",
+                        item.status === value
+                          ? "border-stone-400 bg-stone-100 text-ink"
+                          : "border-line-subtle text-ink-faint hover:border-stone-300",
+                      ].join(" ")}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+
+      <WeeklyScoreSummary
+        weekDate={formatWeekDate(review.weekStart)}
+        score={score}
+        max={max}
+        principles={state.principles}
+      />
+
+      <ul className="flex flex-col gap-5">
+        {PRINCIPLES.map((meta) => {
+          const p = state.principles.find((x) => x.key === meta.key)!;
+          const needsReflection = p.status !== null && !p.reflection.trim();
+          const locked = p.status === null;
+
+          return (
+            <li
+              key={meta.key}
+              className="rounded-xl border border-line-subtle bg-white px-4 py-5 shadow-soft sm:px-6 sm:py-6"
+            >
+              <h2 className="font-serif text-xl tracking-tight text-ink sm:text-2xl">
+                {meta.title}
+              </h2>
+              <p className="mt-2 text-sm leading-relaxed text-ink-faint">
+                {meta.summary}
+              </p>
+
+              <div className="mt-5">
+                <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-ink-soft">
+                  Failure mode
+                </p>
+                <p className="mt-2 text-sm leading-relaxed text-ink-soft">
+                  {meta.failureMode}
+                </p>
+              </div>
+
+              <div className="mt-5">
+                <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-ink-soft">
+                  Rating
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
                   {(["yes", "somewhat", "no"] as const).map((status) => (
                     <button
                       key={status}
@@ -252,7 +481,7 @@ export function WeeklyReviewForm({
                         flushSave();
                       }}
                       className={[
-                        "rounded-lg border px-3 py-1.5 text-xs uppercase tracking-[0.14em] transition-colors",
+                        "rounded-lg border px-4 py-2 text-xs uppercase tracking-[0.14em] transition-colors",
                         p.status === status
                           ? "border-stone-400 bg-stone-100 text-ink"
                           : "border-line-subtle text-ink-faint hover:border-stone-300 hover:text-ink-soft",
@@ -262,103 +491,187 @@ export function WeeklyReviewForm({
                     </button>
                   ))}
                 </div>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
+              </div>
 
-      {/* Section 3 — Fault Detection */}
-      <section className="flex flex-col gap-5">
-        <SectionLabel>Fault Detection</SectionLabel>
-        <h2 className="font-serif text-xl leading-snug text-ink sm:text-2xl">
-          Which patterns showed up this week?
-        </h2>
-        <ul className="flex flex-col gap-2">
-          {FAULTS.map((fault) => {
-            const checked = state.faults.selected.includes(fault.key);
-            return (
-              <li key={fault.key}>
-                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-line-subtle bg-white px-4 py-3 transition-colors hover:bg-stone-50/80">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleFault(fault.key)}
-                    className="mt-0.5 h-4 w-4 rounded border-stone-300 accent-stone-700"
+              <div
+                className={[
+                  "mt-6 flex flex-col gap-5",
+                  locked ? "pointer-events-none opacity-45" : "",
+                ].join(" ")}
+                aria-disabled={locked}
+              >
+                {locked && (
+                  <p className="pointer-events-none text-xs text-ink-faint">
+                    Choose Yes, Somewhat, or No before reflecting.
+                  </p>
+                )}
+
+                <div>
+                  <p className="text-sm font-medium text-ink-soft">Question</p>
+                  <p className="mt-2 font-serif text-lg leading-snug text-ink">
+                    {meta.question}
+                  </p>
+                </div>
+
+                <Field
+                  label="Reflection"
+                  warning={needsReflection}
+                >
+                  <textarea
+                    value={p.reflection}
+                    onChange={(e) =>
+                      updatePrinciple(meta.key, { reflection: e.target.value })
+                    }
+                    onBlur={flushSave}
+                    rows={3}
+                    placeholder="What happened this week?"
+                    className={textareaClass}
+                    aria-required={p.status !== null}
+                    disabled={locked}
+                    tabIndex={locked ? -1 : 0}
                   />
-                  <span className="text-[15px] text-ink-soft">{fault.label}</span>
-                </label>
-              </li>
-            );
-          })}
-        </ul>
-        {hasFaults && (
-          <Field label="Where did these show up?">
+                </Field>
+
+                <Field
+                  label="Evidence"
+                  hint="What specific evidence supports your answer?"
+                >
+                  <textarea
+                    value={p.evidence}
+                    onChange={(e) =>
+                      updatePrinciple(meta.key, { evidence: e.target.value })
+                    }
+                    onBlur={flushSave}
+                    rows={3}
+                    placeholder="Name the concrete moments, actions, or outcomes."
+                    className={textareaClass}
+                    disabled={locked}
+                    tabIndex={locked ? -1 : 0}
+                  />
+                </Field>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+
+      <section className="rounded-xl border border-line-subtle bg-white px-4 py-5 shadow-soft sm:px-6 sm:py-6">
+        <p className="text-xs uppercase tracking-[0.2em] text-ink-faint">
+          Close the Week
+        </p>
+
+        <div className="mt-6 flex flex-col gap-5">
+          <Field
+            label="Week Summary"
+            hint="What was this week really about?"
+          >
             <textarea
-              value={state.faults.whereShowedUp}
+              value={state.weeklyReflection.weekSummary}
               onChange={(e) =>
-                update({
-                  faults: {
-                    ...state.faults,
-                    whereShowedUp: e.target.value,
-                  },
-                })
+                updateReflection({ weekSummary: e.target.value })
               }
               onBlur={flushSave}
               rows={3}
               className={textareaClass}
             />
           </Field>
-        )}
+
+          <Field label="Wins" hint="What am I proud of?">
+            <textarea
+              value={state.weeklyReflection.wins}
+              onChange={(e) => updateReflection({ wins: e.target.value })}
+              onBlur={flushSave}
+              rows={3}
+              className={textareaClass}
+            />
+          </Field>
+
+          <Field
+            label="Attention Required"
+            hint="What needs attention next week?"
+          >
+            <textarea
+              value={state.weeklyReflection.attentionRequired}
+              onChange={(e) =>
+                updateReflection({ attentionRequired: e.target.value })
+              }
+              onBlur={flushSave}
+              rows={3}
+              className={textareaClass}
+            />
+          </Field>
+
+          <Field
+            label="Recurring Pattern"
+            hint="What pattern showed up again this week?"
+          >
+            <textarea
+              value={state.weeklyReflection.recurringPattern}
+              onChange={(e) =>
+                updateReflection({ recurringPattern: e.target.value })
+              }
+              onBlur={flushSave}
+              rows={3}
+              placeholder="Avoidance, drift, isolation, comfort seeking…"
+              className={textareaClass}
+            />
+          </Field>
+
+          <Field
+            label="Theme"
+            hint="What was the central lesson or theme of this week?"
+          >
+            <textarea
+              value={state.weeklyReflection.theme}
+              onChange={(e) => updateReflection({ theme: e.target.value })}
+              onBlur={flushSave}
+              rows={2}
+              placeholder="Action reduces anxiety. Consistency beats intensity."
+              className={textareaClass}
+            />
+          </Field>
+        </div>
       </section>
 
-      {/* Section 4 — Reality Calibration */}
-      <section className="flex flex-col gap-5">
-        <SectionLabel>Reality Calibration</SectionLabel>
-        <Field label="What proved me wrong this week?">
-          <textarea
-            value={state.provedMeWrong}
-            onChange={(e) => update({ provedMeWrong: e.target.value })}
-            onBlur={flushSave}
-            rows={3}
-            className={textareaClass}
-          />
-        </Field>
-        <Field label="What am I avoiding?">
-          <textarea
-            value={state.avoiding}
-            onChange={(e) => update({ avoiding: e.target.value })}
-            onBlur={flushSave}
-            rows={3}
-            className={textareaClass}
-          />
-        </Field>
-      </section>
-
-      {/* Section 5 — Next Week */}
-      <section className="flex flex-col gap-5">
-        <SectionLabel>Next Week</SectionLabel>
-        <p className="text-sm text-ink-faint">Exactly three commitments. No more.</p>
-        <ol className="flex flex-col gap-3">
-          {state.commitments.map((value, i) => (
-            <li key={i} className="flex items-start gap-3">
+      <section className="rounded-xl border border-line-subtle bg-white px-4 py-5 shadow-soft sm:px-6 sm:py-6">
+        <p className="text-xs uppercase tracking-[0.2em] text-ink-faint">
+          Next Week Commitments
+        </p>
+        <p className="mt-2 text-sm text-ink-soft">
+          What would make next week a win?
+        </p>
+        <p className="mt-1 text-xs text-ink-faint">
+          Short, actionable, measurable.
+        </p>
+        <ol className="mt-5 flex flex-col gap-3">
+          {state.weeklyReflection.nextWeekCommitments.map((commitment, i) => (
+            <li key={commitment.id} className="flex items-start gap-3">
               <span className="mt-2.5 font-serif text-lg text-ink-faint">
                 {i + 1}.
               </span>
               <input
                 type="text"
-                value={value}
+                value={commitment.text}
                 onChange={(e) => {
-                  const commitments = [...state.commitments] as [
-                    string,
-                    string,
-                    string,
-                  ];
-                  commitments[i] = e.target.value;
-                  update({ commitments });
+                  const nextWeekCommitments = [
+                    ...state.weeklyReflection.nextWeekCommitments,
+                  ] as FormState["weeklyReflection"]["nextWeekCommitments"];
+                  nextWeekCommitments[i] = {
+                    ...nextWeekCommitments[i],
+                    text: e.target.value,
+                  };
+                  updateReflection({ nextWeekCommitments });
                 }}
                 onBlur={flushSave}
-                placeholder={`Commitment ${i + 1}`}
+                placeholder={
+                  i === 0
+                    ? "Apply to 5 jobs"
+                    : i === 1
+                      ? "Gym 4 times"
+                      : i === 2
+                        ? "No weed"
+                        : "Commitment"
+                }
                 className={inputClass}
               />
             </li>
@@ -366,55 +679,112 @@ export function WeeklyReviewForm({
         </ol>
       </section>
 
-      {/* Section 6 — Identity Statement */}
-      <section className="flex flex-col gap-5">
-        <SectionLabel>Identity Statement</SectionLabel>
-        <h2 className="font-serif text-xl leading-snug text-ink sm:text-2xl">
-          Next week, the version of José I admire would…
-        </h2>
-        <input
-          type="text"
-          value={state.nextWeekJose}
-          onChange={(e) => update({ nextWeekJose: e.target.value })}
-          onBlur={flushSave}
-          placeholder="One sentence."
-          className={inputClass}
-        />
-      </section>
-
-      {(isSaving || saveError) && (
-        <p
-          className={[
-            "text-xs tracking-wide",
-            saveError ? "text-red-700" : "text-stone-400",
-          ].join(" ")}
-          aria-live="polite"
+      <div className="flex flex-col gap-3 border-t border-line-subtle pt-8">
+        <button
+          type="button"
+          onClick={() => void handleSubmit()}
+          disabled={isSubmitting || isSaving}
+          className="inline-flex items-center justify-center rounded-xl border border-ink/10 bg-ink px-6 py-3 text-sm font-medium tracking-wide text-paper transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {saveError ? "Could not save. Check your database connection." : "Saving…"}
-        </p>
-      )}
+          {isSubmitting ? "Saving…" : "Save Weekly Review"}
+        </button>
+
+        {saveNotice && (
+          <p className="text-sm text-ink-soft" aria-live="polite">
+            {saveNotice.message}
+            <span className="mt-1 block text-xs text-ink-faint">
+              {formatSavedTimestamp(saveNotice.savedAt)}
+            </span>
+          </p>
+        )}
+
+        {(isSaving || saveError) && !isSubmitting && (
+          <p
+            className={[
+              "text-xs tracking-wide",
+              saveError ? "text-red-700" : "text-stone-400",
+            ].join(" ")}
+            aria-live="polite"
+          >
+            {saveError
+              ? "Could not save. Check your database connection."
+              : "Draft saved…"}
+          </p>
+        )}
+      </div>
     </form>
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function WeeklyScoreSummary({
+  weekDate,
+  score,
+  max,
+  principles,
+}: {
+  weekDate: string;
+  score: number;
+  max: number;
+  principles: FormState["principles"];
+}) {
   return (
-    <p className="text-xs uppercase tracking-[0.2em] text-ink-faint">
-      {children}
-    </p>
+    <section className="rounded-xl border border-line-subtle bg-white px-4 py-5 shadow-soft sm:px-6 sm:py-6">
+      <p className="text-xs uppercase tracking-[0.2em] text-ink-faint">
+        Weekly Score Summary
+      </p>
+      <p className="mt-1 font-serif text-lg text-ink">{weekDate}</p>
+      <p className="mt-4 text-sm text-ink-soft">
+        Weekly Score:{" "}
+        <span className="font-medium text-ink">
+          {formatWeeklyScore(score)} / {max}
+        </span>
+      </p>
+      <ul className="mt-5 flex flex-col gap-1.5 font-mono text-[13px] leading-relaxed text-ink-soft">
+        {PRINCIPLES.map((meta) => {
+          const p = principles.find((x) => x.key === meta.key);
+          const label = statusLabel(p?.status ?? null);
+          return (
+            <li key={meta.key} className="flex items-baseline gap-2">
+              <span className="shrink-0">{meta.trajectoryLabel}</span>
+              <span
+                className="mb-1 min-w-[1rem] flex-1 border-b border-dotted border-stone-300"
+                aria-hidden
+              />
+              <span className="shrink-0 text-ink">{label}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
 function Field({
   label,
+  hint,
+  required,
+  warning,
   children,
 }: {
   label: string;
-  children: React.ReactNode;
+  hint?: string;
+  required?: boolean;
+  warning?: boolean;
+  children?: React.ReactNode;
 }) {
   return (
     <label className="flex flex-col gap-2">
-      <span className="font-serif text-lg text-ink">{label}</span>
+      <span className="flex items-baseline gap-2">
+        <span className="text-sm font-medium text-ink-soft">{label}</span>
+        {warning ? (
+          <span className="text-xs text-amber-700">Required</span>
+        ) : required ? (
+          <span className="text-xs text-ink-faint">Required</span>
+        ) : null}
+      </span>
+      {hint && (
+        <span className="text-xs leading-relaxed text-ink-faint">{hint}</span>
+      )}
       {children}
     </label>
   );
@@ -425,6 +795,7 @@ const textareaClass = [
   "font-serif text-[15px] leading-relaxed text-ink-soft",
   "placeholder:text-ink-faint",
   "transition-colors focus:border-stone-300 focus:bg-white focus:outline-none",
+  "disabled:cursor-not-allowed",
 ].join(" ");
 
 const inputClass = [
@@ -432,4 +803,5 @@ const inputClass = [
   "font-serif text-[15px] text-ink-soft",
   "placeholder:text-ink-faint",
   "transition-colors focus:border-stone-300 focus:bg-white focus:outline-none",
+  "disabled:cursor-not-allowed",
 ].join(" ");

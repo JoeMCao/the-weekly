@@ -1,6 +1,5 @@
 // Weekly Compass — Prisma schema
-// Single-user weekly review. One row per week (Sunday week start).
-// Nested sections stored as JSON for simplicity.
+// Single-user weekly review. One row per week.
 
 generator client {
   provider = "prisma-client-js"
@@ -12,16 +11,12 @@ datasource db {
 }
 
 model WeeklyReview {
-  id              String   @id @default(cuid())
-  weekStart       DateTime @unique @db.Date
-  alignmentScore  Int?
-  alignmentReason String?
-  principles      Json     @default("[]")
-  faults          Json     @default("{\"selected\":[],\"whereShowedUp\":\"\"}")
-  provedMeWrong   String?
-  avoiding        String?
-  commitments     Json     @default("[\"\",\"\",\"\"]")
-  nextWeekJose    String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  weekStart            DateTime @unique @db.Date
+  principles           Json     @default("[]")
+  weeklyReflection     Json     @default("{\"weekSummary\":\"\",\"wins\":\"\",\"attentionRequired\":\"\",\"recurringPattern\":\"\",\"theme\":\"\",\"nextWeekCommitments\":[\"\",\"\",\"\",\"\",\"\"]}")
+  reviewMetadata       Json     @default("{\"reviewDate\":\"\",\"context\":\"\",\"savedAt\":null}")
+  priorWeekCommitments Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }

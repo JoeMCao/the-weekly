@@ -1,10 +1,15 @@
 import { notFound } from "next/navigation";
 import { WeeklyReviewForm } from "@/components/WeeklyReviewForm";
 import { ViewPageHeader } from "@/components/ViewPageHeader";
-import { isValidDateKey } from "@/lib/date";
-import { ensureReview, reviewHasSubstance } from "@/lib/reviews";
+import { isValidDateKey, type DateKey } from "@/lib/date";
+import {
+  ensureWeekCalendar,
+  getReviewForWeek,
+  reviewHasSubstance,
+} from "@/lib/reviews";
 import {
   getRequestTimeZone,
+  todayKeyForRequest,
   weekStartKeyForRequest,
 } from "@/lib/request-time-zone";
 import { formatWeekLong, weekStartKeyFromDateKey } from "@/lib/week";
@@ -28,14 +33,19 @@ export default async function ReviewPage({
   }
 
   const currentWeek = weekStartKeyForRequest();
+  const today = todayKeyForRequest();
+  await ensureWeekCalendar(currentWeek, today);
+
   let weekStart = currentWeek;
 
   if (searchParams.week) {
     if (!isValidDateKey(searchParams.week)) notFound();
-    weekStart = weekStartKeyFromDateKey(searchParams.week);
+    weekStart = weekStartKeyFromDateKey(searchParams.week as DateKey);
   }
 
-  const review = await ensureReview(weekStart);
+  const review = await getReviewForWeek(weekStart, today);
+  if (!review) notFound();
+
   const isCurrentWeek = weekStart === currentWeek;
   const isPastWeek = weekStart < currentWeek;
 
@@ -59,7 +69,12 @@ export default async function ReviewPage({
       />
 
       <div className="mt-10 sm:mt-12">
-        <WeeklyReviewForm review={review} />
+        <WeeklyReviewForm
+          review={review}
+          defaultReviewDate={today}
+          isComplete={review.isComplete}
+          previousCommitmentsStale={review.previousCommitmentsStale}
+        />
       </div>
     </section>
   );
