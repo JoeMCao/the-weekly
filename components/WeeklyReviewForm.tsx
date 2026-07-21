@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   saveWeeklyReview,
   submitWeeklyReview,
@@ -15,6 +15,7 @@ import {
   PREVIOUS_COMMITMENT_STATUSES,
   type PreviousCommitmentStatus,
 } from "@/lib/commitments";
+import { DailyNotesSection } from "@/components/DailyNotesSection";
 import { SectionHeader, WorkspaceZone } from "@/components/SectionHeader";
 import {
   PRINCIPLES,
@@ -24,6 +25,8 @@ import {
   type PrincipleKey,
   type PrincipleStatus,
 } from "@/lib/principles";
+import type { DailyNoteData } from "@/lib/daily-notes";
+import { formatWeeklyCompassForClipboard } from "@/lib/format-weekly-compass";
 import type { WeeklyReviewSummary } from "@/lib/reviews";
 import { fromDateKey } from "@/lib/date";
 
@@ -56,20 +59,28 @@ function formatSavedTimestamp(iso: string): string {
 export function WeeklyReviewForm({
   review,
   defaultReviewDate,
+  today,
   isComplete = false,
   previousCommitmentsStale = false,
-  dailyNotesSlot,
+  dailyNotes: initialDailyNotes = [],
+  isCurrentWeek = true,
 }: {
   review: WeeklyReviewSummary;
   defaultReviewDate: string;
+  today: string;
   isComplete?: boolean;
   previousCommitmentsStale?: boolean;
-  dailyNotesSlot?: ReactNode;
+  dailyNotes?: DailyNoteData[];
+  isCurrentWeek?: boolean;
 }) {
   const [state, setState] = useState<FormState>(() => buildState(review));
+  const [liveDailyNotes, setLiveDailyNotes] = useState(initialDailyNotes);
   const [saveError, setSaveError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState(false);
+  const [isCopying, setIsCopying] = useState(false);
   const [saveNotice, setSaveNotice] = useState<{
     message: string;
     savedAt: string;
@@ -84,6 +95,9 @@ export function WeeklyReviewForm({
       : null,
   );
   const [isRefreshingCommitments, setIsRefreshingCommitments] = useState(false);
+  const copyNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dailyNotesRef = useRef(liveDailyNotes);
+  dailyNotesRef.current = liveDailyNotes;
   const stateRef = useRef(state);
   const lastSavedRef = useRef(JSON.stringify(review));
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -101,8 +115,12 @@ export function WeeklyReviewForm({
     setState(next);
     lastSavedRef.current = JSON.stringify(review);
     stateRef.current = next;
+    setLiveDailyNotes(initialDailyNotes);
+    dailyNotesRef.current = initialDailyNotes;
     setSaveError(false);
     setIsSaving(false);
+    setCopyNotice(null);
+    setCopyError(false);
     setSaveNotice(
       review.reviewMetadata.savedAt
         ? {
@@ -312,9 +330,33 @@ export function WeeklyReviewForm({
     }
   }, [buildPayload, defaultReviewDate]);
 
+  const handleCopyWeeklyCompass = useCallback(async () => {
+    setIsCopying(true);
+    setCopyError(false);
+    setCopyNotice(null);
+    try {
+      const text = formatWeeklyCompassForClipboard(
+        stateRef.current,
+        dailyNotesRef.current,
+      );
+      await navigator.clipboard.writeText(text);
+      setCopyNotice("Weekly Compass copied");
+      if (copyNoticeTimerRef.current) clearTimeout(copyNoticeTimerRef.current);
+      copyNoticeTimerRef.current = setTimeout(() => {
+        setCopyNotice(null);
+        copyNoticeTimerRef.current = null;
+      }, 2500);
+    } catch {
+      setCopyError(true);
+    } finally {
+      setIsCopying(false);
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      if (copyNoticeTimerRef.current) clearTimeout(copyNoticeTimerRef.current);
       const current = JSON.stringify(stateRef.current);
       if (current !== lastSavedRef.current) {
         void persist(stateRef.current);
@@ -396,9 +438,22 @@ export function WeeklyReviewForm({
         </div>
       </WorkspaceZone>
 
-      {dailyNotesSlot ? (
-        <WorkspaceZone>{dailyNotesSlot}</WorkspaceZone>
-      ) : null}
+      <WorkspaceZone>
+        <SectionHeader
+          eyebrow="Daily Notes"
+          subtitle="Capture what is happening while it is happening."
+        />
+        <DailyNotesSection
+          weekStart={review.weekStart}
+          notes={liveDailyNotes}
+          today={today}
+          isCurrentWeek={isCurrentWeek}
+          onNotesChange={(next) => {
+            setLiveDailyNotes(next);
+            dailyNotesRef.current = next;
+          }}
+        />
+      </WorkspaceZone>
 
       <WorkspaceZone className="border-t border-line-subtle pt-16 sm:pt-20">
         <SectionHeader
@@ -733,6 +788,27 @@ export function WeeklyReviewForm({
         >
           {isSubmitting ? "Saving…" : "Save Weekly Review"}
         </button>
+
+        <button
+          type="button"
+          onClick={() => void handleCopyWeeklyCompass()}
+          disabled={isCopying}
+          className="inline-flex items-center justify-center rounded-xl border border-line-subtle bg-white px-6 py-3 text-sm font-medium tracking-wide text-ink-soft transition-colors hover:border-stone-300 hover:text-ink disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isCopying ? "Copying…" : "Copy Weekly Compass"}
+        </button>
+
+        {copyNotice && (
+          <p className="text-sm text-ink-soft" aria-live="polite">
+            {copyNotice}
+          </p>
+        )}
+
+        {copyError && (
+          <p className="text-xs tracking-wide text-red-700" aria-live="polite">
+            Could not copy. Check clipboard permissions and try again.
+          </p>
+        )}
 
         {saveNotice && (
           <p className="text-sm text-ink-soft" aria-live="polite">

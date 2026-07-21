@@ -1,6 +1,4 @@
 import { notFound } from "next/navigation";
-import { DailyNotesSection } from "@/components/DailyNotesSection";
-import { SectionHeader } from "@/components/SectionHeader";
 import { WeekWorkspaceHeader } from "@/components/WeekWorkspaceHeader";
 import { WeeklyReviewForm } from "@/components/WeeklyReviewForm";
 import { getDailyNotesForWeek } from "@/lib/daily-notes";
@@ -75,22 +73,11 @@ export default async function ReviewPage({
       <WeeklyReviewForm
         review={review}
         defaultReviewDate={today}
+        today={today}
         isComplete={review.isComplete}
         previousCommitmentsStale={review.previousCommitmentsStale}
-        dailyNotesSlot={
-          <>
-            <SectionHeader
-              eyebrow="Daily Notes"
-              subtitle="Capture what is happening while it is happening."
-            />
-            <DailyNotesSection
-              weekStart={weekStart}
-              notes={dailyNotes}
-              today={today}
-              isCurrentWeek={isCurrentWeek}
-            />
-          </>
-        }
+        dailyNotes={dailyNotes}
+        isCurrentWeek={isCurrentWeek}
       />
     </section>
   );

@@ -80,11 +80,13 @@ export function DailyNotesSection({
   notes: initialNotes,
   today,
   isCurrentWeek,
+  onNotesChange,
 }: {
   weekStart: DateKey;
   notes: DailyNoteData[];
   today: DateKey;
   isCurrentWeek: boolean;
+  onNotesChange?: (notes: DailyNoteData[]) => void;
 }) {
   const [notes, setNotes] = useState(initialNotes);
   const [expandedDay, setExpandedDay] = useState<DateKey | null>(() =>
@@ -93,6 +95,8 @@ export function DailyNotesSection({
   const [saveStatus, setSaveStatus] = useState<Record<DateKey, SaveStatus>>({});
 
   const notesRef = useRef(notes);
+  const onNotesChangeRef = useRef(onNotesChange);
+  onNotesChangeRef.current = onNotesChange;
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const lastSavedRef = useRef<Record<string, string>>(
     Object.fromEntries(initialNotes.map((n) => [n.noteDate, n.content])),
@@ -178,9 +182,13 @@ export function DailyNotesSection({
 
   const updateNote = useCallback(
     (noteDate: DateKey, content: string) => {
-      setNotes((prev) =>
-        prev.map((n) => (n.noteDate === noteDate ? { ...n, content } : n)),
-      );
+      setNotes((prev) => {
+        const next = prev.map((n) =>
+          n.noteDate === noteDate ? { ...n, content } : n,
+        );
+        onNotesChangeRef.current?.(next);
+        return next;
+      });
 
       if (content === lastSavedRef.current[noteDate]) {
         clearTimer(noteDate);
