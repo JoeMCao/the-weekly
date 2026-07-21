@@ -6,7 +6,7 @@ import {
   reviewHasSubstance,
   type WeeklyReviewSummary,
 } from "@/lib/reviews";
-import { formatWeekRangeShort } from "@/lib/week";
+import { formatWeekRange } from "@/lib/week";
 
 export function TrajectoryView({
   reviews,
@@ -40,7 +40,7 @@ export function TrajectoryView({
             >
               <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                 <span className="font-serif text-xl text-ink transition-colors group-hover:text-ink-soft">
-                  {formatWeekRangeShort(week.weekStart)}
+                  {formatWeekRange(week.weekStart)}
                 </span>
                 <span className="text-sm text-ink-faint">{week.statusLabel}</span>
               </div>

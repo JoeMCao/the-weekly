@@ -16,7 +16,7 @@ import {
 import type { WeeklyReviewSummary } from "@/lib/reviews";
 import {
   formatDayNoteLabel,
-  formatWeekRangeShort,
+  formatWeekRange,
 } from "@/lib/week";
 
 function hasText(value: string | null | undefined): boolean {
@@ -132,7 +132,7 @@ function formatWeeklyScoreSummary(
   if (!hasAnyRating) return;
 
   pushSection(lines, "Weekly Score Summary");
-  lines.push(formatWeekRangeShort(weekStart));
+  lines.push(formatWeekRange(weekStart));
   lines.push(`Weekly Score: ${formatWeeklyScore(score)} / ${max}`);
   lines.push("");
 
@@ -259,7 +259,7 @@ export function formatWeeklyCompassForClipboard(
 
   lines.push("WEEKLY COMPASS");
   lines.push("");
-  lines.push(formatWeekRangeShort(review.weekStart));
+  lines.push(formatWeekRange(review.weekStart));
 
   formatThisWeeksCommitments(lines, review.previousCommitments);
   formatDailyNotes(lines, dailyNotes);
@@ -270,10 +270,13 @@ export function formatWeeklyCompassForClipboard(
   formatCloseTheWeek(lines, review.weeklyReflection);
   formatNextWeekCommitments(lines, review.weeklyReflection);
 
-  // Trim trailing blank lines
+  // Trim trailing blank lines, then append the export end marker.
   while (lines.length > 0 && lines[lines.length - 1] === "") {
     lines.pop();
   }
+
+  lines.push("");
+  lines.push("END OF WEEKLY COMPASS");
 
   return lines.join("\n");
 }

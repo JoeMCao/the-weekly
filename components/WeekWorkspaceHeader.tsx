@@ -1,6 +1,6 @@
 import { countCompletedCommitments } from "@/lib/commitments";
 import type { WeeklyReviewSummary } from "@/lib/reviews";
-import { formatWeekRangeShort } from "@/lib/week";
+import { formatWeekRange } from "@/lib/week";
 
 export function WeekWorkspaceHeader({
   review,
@@ -21,7 +21,7 @@ export function WeekWorkspaceHeader({
         {isCurrentWeek ? "This Week" : "Week"}
       </p>
       <h1 className="font-serif text-3xl tracking-tight text-ink sm:text-4xl">
-        {formatWeekRangeShort(weekStart)}
+        {formatWeekRange(weekStart)}
       </h1>
       {total > 0 && (
         <p className="text-sm text-ink-faint">

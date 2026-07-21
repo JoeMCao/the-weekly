@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { PRINCIPLES, statusEmoji } from "@/lib/principles";
 import type { WeeklyReviewSummary } from "@/lib/reviews";
-import { formatWeekRangeShort } from "@/lib/week";
+import { formatWeekRange } from "@/lib/week";
 
 export function PreviousWeekSummary({
   review,
@@ -16,7 +16,7 @@ export function PreviousWeekSummary({
         Last week
       </p>
       <h2 className="mt-1 font-serif text-2xl text-ink">
-        {formatWeekRangeShort(review.weekStart)}
+        {formatWeekRange(review.weekStart)}
         {review.isComplete ? " ✓" : ""}
       </h2>
 

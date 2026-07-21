@@ -28,7 +28,7 @@ import {
 import type { DailyNoteData } from "@/lib/daily-notes";
 import { formatWeeklyCompassForClipboard } from "@/lib/format-weekly-compass";
 import type { WeeklyReviewSummary } from "@/lib/reviews";
-import { fromDateKey } from "@/lib/date";
+import { formatWeekRange } from "@/lib/week";
 
 const AUTOSAVE_DELAY_MS = 1200;
 
@@ -36,14 +36,6 @@ type FormState = WeeklyReviewSummary;
 
 function buildState(review: WeeklyReviewSummary): FormState {
   return structuredClone(review);
-}
-
-function formatWeekDate(weekStart: string): string {
-  return fromDateKey(weekStart).toLocaleDateString(undefined, {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 function formatSavedTimestamp(iso: string): string {
@@ -532,7 +524,7 @@ export function WeeklyReviewForm({
       )}
 
       <WeeklyScoreSummary
-        weekDate={formatWeekDate(review.weekStart)}
+        weekDate={formatWeekRange(review.weekStart)}
         score={score}
         max={max}
         principles={state.principles}

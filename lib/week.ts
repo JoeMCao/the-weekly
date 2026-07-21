@@ -59,8 +59,8 @@ export function dayKeysForWeek(weekStart: DateKey): DateKey[] {
 export function formatDayNoteLabel(noteDate: DateKey): string {
   const [y, m, d] = noteDate.split("-").map(Number);
   const date = new Date(y, (m ?? 1) - 1, d ?? 1);
-  const weekday = date.toLocaleDateString(undefined, { weekday: "short" });
-  const dayPart = date.toLocaleDateString(undefined, {
+  const weekday = date.toLocaleDateString("en-US", { weekday: "short" });
+  const dayPart = date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
   });
@@ -71,48 +71,68 @@ export function isDateInWeek(noteDate: DateKey, weekStart: DateKey): boolean {
   return dayKeysForWeek(weekStart).includes(noteDate);
 }
 
-export function formatWeekRangeShort(key: DateKey): string {
-  const [y, m, d] = key.split("-").map(Number);
+const MONTH_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+/**
+ * Compact weekly range from a Monday week-start key.
+ * Examples:
+ *   2026-07-13 → Jul 13–19, 2026
+ *   2026-07-27 → Jul 27–Aug 2, 2026
+ *   2026-12-28 → Dec 28, 2026–Jan 3, 2027
+ */
+export function formatWeekRange(weekStart: DateKey): string {
+  const [y, m, d] = weekStart.split("-").map(Number);
   const start = new Date(y, (m ?? 1) - 1, d ?? 1);
   const end = new Date(start);
-  end.setDate(end.getDate() + 6);
-  const sameMonth = start.getMonth() === end.getMonth();
-  const startPart = start.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
-  const endPart = end.toLocaleDateString(undefined, {
-    month: sameMonth ? undefined : "short",
-    day: "numeric",
-    year: "numeric",
-  });
-  return `${startPart} – ${endPart}`;
+  end.setDate(start.getDate() + 6);
+
+  const startMonth = MONTH_SHORT[start.getMonth()];
+  const endMonth = MONTH_SHORT[end.getMonth()];
+  const startDay = start.getDate();
+  const endDay = end.getDate();
+  const startYear = start.getFullYear();
+  const endYear = end.getFullYear();
+
+  const sameMonth = start.getMonth() === end.getMonth() && startYear === endYear;
+  const sameYear = startYear === endYear;
+
+  if (sameMonth) {
+    return `${startMonth} ${startDay}–${endDay}, ${endYear}`;
+  }
+
+  if (sameYear) {
+    return `${startMonth} ${startDay}–${endMonth} ${endDay}, ${endYear}`;
+  }
+
+  return `${startMonth} ${startDay}, ${startYear}–${endMonth} ${endDay}, ${endYear}`;
+}
+
+/** @deprecated Prefer formatWeekRange — kept as an alias for existing call sites. */
+export function formatWeekRangeShort(key: DateKey): string {
+  return formatWeekRange(key);
 }
 
 export function formatWeekLabel(key: DateKey): string {
   const [y, m, d] = key.split("-").map(Number);
   const date = new Date(y, (m ?? 1) - 1, d ?? 1);
-  return date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
+  return `${MONTH_SHORT[date.getMonth()]} ${date.getDate()}`;
 }
 
 export function formatWeekLong(key: DateKey): string {
-  const [y, m, d] = key.split("-").map(Number);
-  const start = new Date(y, (m ?? 1) - 1, d ?? 1);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 6);
-  const left = start.toLocaleDateString(undefined, {
-    month: "long",
-    day: "numeric",
-  });
-  const right = end.toLocaleDateString(undefined, {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-  return `${left} – ${right}`;
+  return formatWeekRange(key);
 }
 
 export function weekStartToUtc(key: DateKey): Date {
