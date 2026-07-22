@@ -16,6 +16,7 @@ import {
   type PreviousCommitmentStatus,
 } from "@/lib/commitments";
 import { DailyNotesSection } from "@/components/DailyNotesSection";
+import { PrincipleGuideButton } from "@/components/PrincipleGuideButton";
 import { SectionHeader, WorkspaceZone } from "@/components/SectionHeader";
 import {
   PRINCIPLES,
@@ -541,9 +542,15 @@ export function WeeklyReviewForm({
               key={meta.key}
               className="rounded-xl border border-line-subtle bg-white px-4 py-5 shadow-soft sm:px-6 sm:py-6"
             >
-              <h2 className="font-serif text-xl tracking-tight text-ink sm:text-2xl">
-                {meta.title}
-              </h2>
+              <div className="flex items-center gap-2.5">
+                <h2 className="font-serif text-xl tracking-tight text-ink sm:text-2xl">
+                  {meta.title}
+                </h2>
+                <PrincipleGuideButton
+                  principleKey={meta.key}
+                  title={meta.title}
+                />
+              </div>
               <p className="mt-2 text-sm leading-relaxed text-ink-faint">
                 {meta.summary}
               </p>
