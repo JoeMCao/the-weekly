@@ -6,9 +6,13 @@ import {
   parseNextWeekCommitments,
   parsePreviousCommitments,
   previousCommitmentsHaveStatuses,
-  type NextWeekCommitments,
   type PreviousCommitment,
 } from "@/lib/commitments";
+import {
+  learningLoopHasSubstance,
+  modelUpdatesSatisfied,
+  parseLearningLoop,
+} from "@/lib/learning-loop";
 import {
   emptyPrinciples,
   emptyReviewMetadata,
@@ -60,7 +64,11 @@ function parsePrinciples(raw: unknown): PrincipleReview[] {
       key: p.key,
       reflection: String(found.reflection ?? ""),
       evidence: String(found.evidence ?? ""),
+      // Preserve saved ratings exactly; only default when missing/invalid.
       status: isValidStatus(found.status) ? found.status : null,
+      evaluationNote: String(
+        (found as { evaluationNote?: unknown }).evaluationNote ?? "",
+      ),
     };
   });
 }
@@ -69,6 +77,7 @@ function parseWeeklyReflection(raw: unknown): WeeklyReflection {
   const base = emptyWeeklyReflection();
   if (!raw || typeof raw !== "object") return base;
   const obj = raw as Record<string, unknown>;
+  const learning = parseLearningLoop(obj);
   return {
     weekSummary: String(obj.weekSummary ?? obj.evidenceReview ?? ""),
     wins: String(obj.wins ?? ""),
@@ -82,6 +91,7 @@ function parseWeeklyReflection(raw: unknown): WeeklyReflection {
           : null) ??
         (typeof obj.weekWin === "string" && obj.weekWin ? [obj.weekWin] : null),
     ),
+    ...learning,
   };
 }
 
@@ -160,7 +170,12 @@ async function isPreviousCommitmentsSnapshotStale(
 }
 
 function principleHasSubstance(p: PrincipleReview): boolean {
-  return Boolean(p.reflection.trim() || p.evidence.trim() || p.status);
+  return Boolean(
+    p.reflection.trim() ||
+      p.evidence.trim() ||
+      p.evaluationNote.trim() ||
+      p.status,
+  );
 }
 
 export function reviewHasSubstance(data: WeeklyReviewData): boolean {
@@ -175,10 +190,44 @@ export function reviewHasSubstance(data: WeeklyReviewData): boolean {
       r.attentionRequired.trim() ||
       r.recurringPattern.trim() ||
       r.theme.trim() ||
-      r.nextWeekCommitments.some(commitmentHasText),
+      r.nextWeekCommitments.some(commitmentHasText) ||
+      learningLoopHasSubstance(r),
   );
 }
 
+/** Part 1 — ready to discuss with mentor (ratings not required). */
+export function isPart1Complete(data: WeeklyReviewData): boolean {
+  const { weekSummary, theme } = data.weeklyReflection;
+  if (!weekSummary.trim() || !theme.trim()) return false;
+
+  const withReflection = data.principles.filter((p) => p.reflection.trim());
+  if (withReflection.length === 0) return false;
+
+  if (data.previousCommitments.length > 0) {
+    return data.previousCommitments.every((item) => item.status !== null);
+  }
+
+  return true;
+}
+
+/** Part 2 synthesis — diagnosis, ratings, strategy, commitments. */
+export function isSynthesisComplete(data: WeeklyReviewData): boolean {
+  const r = data.weeklyReflection;
+  if (!r.weeklyDiagnosis.trim() || !r.weeklyStrategy.trim()) return false;
+  if (!modelUpdatesSatisfied(r)) return false;
+  if (!r.nextWeekCommitments.some(commitmentHasText)) return false;
+
+  const rated = data.principles.filter((p) => p.status !== null);
+  if (rated.length === 0) return false;
+
+  return true;
+}
+
+/**
+ * Overall completion used for carry-forward and trajectory.
+ * Legacy reviews without Part 2 fields stay complete under prior rules.
+ * Once Part 2 is started, synthesis fields are required.
+ */
 export function isReviewComplete(data: WeeklyReviewData): boolean {
   const { weekSummary, theme, nextWeekCommitments } = data.weeklyReflection;
   if (!weekSummary.trim() || !theme.trim()) return false;
@@ -186,10 +235,17 @@ export function isReviewComplete(data: WeeklyReviewData): boolean {
 
   const rated = data.principles.filter((p) => p.status !== null);
   if (rated.length === 0) return false;
+  // Part 1 reflections: require a reflection for every principle that was rated.
   if (!rated.every((p) => p.reflection.trim().length > 0)) return false;
 
   if (data.previousCommitments.length > 0) {
-    return data.previousCommitments.every((item) => item.status !== null);
+    if (!data.previousCommitments.every((item) => item.status !== null)) {
+      return false;
+    }
+  }
+
+  if (learningLoopHasSubstance(data.weeklyReflection)) {
+    if (!isSynthesisComplete(data)) return false;
   }
 
   return true;
@@ -409,7 +465,7 @@ export async function saveReview(
     });
   }
 
-  const weeklyReflection = {
+  const weeklyReflection: WeeklyReflection = {
     ...current.weeklyReflection,
     ...input.weeklyReflection,
   };
@@ -419,6 +475,12 @@ export async function saveReview(
       input.weeklyReflection.nextWeekCommitments,
       current.weeklyReflection.nextWeekCommitments,
     );
+  }
+
+  if (input.weeklyReflection?.modelUpdates) {
+    weeklyReflection.modelUpdates = parseLearningLoop({
+      modelUpdates: input.weeklyReflection.modelUpdates,
+    }).modelUpdates;
   }
 
   let reviewMetadata: ReviewMetadata = {

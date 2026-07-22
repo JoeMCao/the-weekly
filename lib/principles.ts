@@ -2,6 +2,11 @@ import {
   emptyNextWeekCommitments,
   type NextWeekCommitments,
 } from "@/lib/commitments";
+import {
+  emptyLearningLoop,
+  type LearningLoop,
+  type ModelUpdate,
+} from "@/lib/learning-loop";
 
 export type PrincipleKey =
   | "protect-the-engine"
@@ -18,8 +23,11 @@ export type PrincipleStatus = "yes" | "somewhat" | "no";
 export type PrincipleReview = {
   key: PrincipleKey;
   reflection: string;
+  /** Legacy — preserved in storage; hidden from the active Part 1 workflow. */
   evidence: string;
   status: PrincipleStatus | null;
+  /** Legacy per-principle note — preserved; superseded by assessmentNotes. */
+  evaluationNote: string;
 };
 
 export type WeeklyReflection = {
@@ -29,7 +37,9 @@ export type WeeklyReflection = {
   recurringPattern: string;
   theme: string;
   nextWeekCommitments: NextWeekCommitments;
-};
+} & LearningLoop;
+
+export type { ModelUpdate };
 
 export type ReviewMetadata = {
   reviewDate: string;
@@ -129,6 +139,7 @@ export function emptyPrinciples(): PrincipleReview[] {
     reflection: "",
     evidence: "",
     status: null,
+    evaluationNote: "",
   }));
 }
 
@@ -140,6 +151,7 @@ export function emptyWeeklyReflection(): WeeklyReflection {
     recurringPattern: "",
     theme: "",
     nextWeekCommitments: emptyNextWeekCommitments(),
+    ...emptyLearningLoop(),
   };
 }
 

@@ -8,6 +8,11 @@ import {
   type PreviousCommitment,
   type PreviousCommitmentStatus,
 } from "@/lib/commitments";
+import {
+  MAX_MODEL_UPDATES,
+  parseModelUpdates,
+  type ModelUpdate,
+} from "@/lib/learning-loop";
 import type { PrincipleKey, PrincipleStatus } from "@/lib/principles";
 import {
   refreshPreviousCommitments,
@@ -22,6 +27,19 @@ const MAX_DAILY_NOTE = 12000;
 
 function clampText(value: string): string {
   return String(value ?? "").slice(0, MAX_TEXT);
+}
+
+function clampModelUpdates(updates: ModelUpdate[]): ModelUpdate[] {
+  return parseModelUpdates(updates)
+    .slice(0, MAX_MODEL_UPDATES)
+    .map((u) => ({
+      id: u.id,
+      previousBelief: clampText(u.previousBelief),
+      updatedBelief: clampText(u.updatedBelief),
+      evidence: clampText(u.evidence),
+      behaviorChange: clampText(u.behaviorChange),
+      createdAt: u.createdAt,
+    }));
 }
 
 export type SaveReviewResult =
@@ -49,6 +67,7 @@ type ReviewPayload = {
         reflection?: string;
         evidence?: string;
         status?: PrincipleStatus | null;
+        evaluationNote?: string;
       }
     >
   >;
@@ -59,6 +78,11 @@ type ReviewPayload = {
     recurringPattern?: string;
     theme?: string;
     nextWeekCommitments?: NextWeekCommitment[];
+    weeklyDiagnosis?: string;
+    weeklyStrategy?: string;
+    modelUpdates?: ModelUpdate[];
+    noModelUpdateThisWeek?: boolean;
+    assessmentNotes?: string;
   };
   reviewMetadata?: {
     reviewDate?: string;
@@ -82,6 +106,10 @@ function buildPayload(input: ReviewPayload): SaveReviewInput {
         evidence:
           value.evidence !== undefined ? clampText(value.evidence) : undefined,
         status: value.status,
+        evaluationNote:
+          value.evaluationNote !== undefined
+            ? clampText(value.evaluationNote)
+            : undefined,
       };
     }
     payload.principles = principles;
@@ -112,6 +140,23 @@ function buildPayload(input: ReviewPayload): SaveReviewInput {
       nextWeekCommitments: input.weeklyReflection.nextWeekCommitments
         ? parseNextWeekCommitments(input.weeklyReflection.nextWeekCommitments)
         : undefined,
+      weeklyDiagnosis:
+        input.weeklyReflection.weeklyDiagnosis !== undefined
+          ? clampText(input.weeklyReflection.weeklyDiagnosis)
+          : undefined,
+      weeklyStrategy:
+        input.weeklyReflection.weeklyStrategy !== undefined
+          ? clampText(input.weeklyReflection.weeklyStrategy)
+          : undefined,
+      modelUpdates:
+        input.weeklyReflection.modelUpdates !== undefined
+          ? clampModelUpdates(input.weeklyReflection.modelUpdates)
+          : undefined,
+      noModelUpdateThisWeek: input.weeklyReflection.noModelUpdateThisWeek,
+      assessmentNotes:
+        input.weeklyReflection.assessmentNotes !== undefined
+          ? clampText(input.weeklyReflection.assessmentNotes)
+          : undefined,
     };
   }
 
@@ -171,11 +216,15 @@ export async function submitWeeklyReview(
   revalidatePath("/review");
   revalidatePath("/trajectory");
 
+  const message = result.isComplete
+    ? "Review Completed"
+    : "Weekly Review Saved";
+
   return {
     ok: true,
     savedAt: result.savedAt,
     isComplete: result.isComplete,
-    message: "Review Completed",
+    message,
   };
 }
 
